@@ -16,6 +16,8 @@ class TensorParallelEngine(InferenceEngine):
                  max_active: int = 2, prefix_cache: bool = True):
         if len(device_ids) != 2 or len(set(device_ids)) != 2:
             raise ValueError("TP=2 requires two distinct assigned devices")
+        if not 1 <= max_active <= 2:
+            raise ValueError("TP=2 supports at most two active requests")
         super().__init__(model_root, device_ids[0], max_active=max_active,
                          prefix_cache=prefix_cache)
         self.device_id = list(device_ids)
