@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 from math import prod
+import os
 from pathlib import Path
 from typing import Any
 import time
@@ -19,9 +20,10 @@ from transformers import AutoConfig
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5TextRotaryEmbedding
 
 from .kv_cache import CacheCapacityError, KVCache, RequestPages
+from .mixed_batch import packed_token_offsets, select_tp1_graph
 from .model import (BATCH, BLOCK_SIZE, CONTEXT, HIDDEN, POOL_BLOCKS, ROWS,
                     VOCAB, tp_rank_TP_VOCAB, CandidateExchange, decode_fwd,
-                    prefill_fwd, tp_decode_fwd, tp_prefill_fwd)
+                    mixed_fwd, prefill_fwd, tp_decode_fwd, tp_prefill_fwd)
 from .schedule import BatchSlot, RequestCapacityError, RequestState
 from .weight import TextWeights
 
@@ -74,6 +76,10 @@ class ModelRunner:
         self.provenance = runtime_provenance()
         self.cache = KVCache("qwen3.8-27b-v2", on_event=on_cache_event)
         self.on_activation = on_activation
+        mixed_setting = os.environ.get("PYPTO_QWEN_MIXED", "0")
+        if mixed_setting not in ("0", "1"):
+            raise ValueError("PYPTO_QWEN_MIXED must be 0 or 1")
+        self.enable_mixed = mixed_setting == "1"
         self.allow_prefix_hits = True
         self.requests: dict[str, ResidentRequest] = {}
         self.slot_ids: list[str | None] = [None] * BATCH
@@ -95,20 +101,33 @@ class ModelRunner:
         self.sin = torch.zeros_like(self.cos).share_memory_()
         self.masks = torch.full((BATCH, ROWS, CONTEXT), -10000.0).share_memory_()
         self.counts = torch.zeros(BATCH, dtype=torch.int32).share_memory_()
+        self.packed_offsets = torch.zeros(BATCH + 1, dtype=torch.int32).share_memory_()
+        self.state_slots = torch.zeros(BATCH, dtype=torch.int32).share_memory_()
         self.offsets = torch.zeros(BATCH, dtype=torch.int32).share_memory_()
         self.tables = torch.zeros((BATCH, CONTEXT // BLOCK_SIZE), dtype=torch.int32).share_memory_()
 
-    def start(self) -> None:
+    def start(self, *, include_reference_graphs: bool = False) -> None:
+        """Load the selected path, or both paths for numerical/performance comparisons."""
         if self.worker is not None:
             raise RuntimeError("Model runner is already started")
         samples = single_meta_samples()
-        self.prefill = prefill_fwd.compile(*samples, 1, config=self.config)
-        self.decode = decode_fwd.compile(*samples, 1, config=self.config)
+        self.prefill = self.decode = self.mixed = None
+        graphs = []
+        if not self.enable_mixed or include_reference_graphs:
+            self.prefill = prefill_fwd.compile(*samples, 1, config=self.config)
+            self.decode = decode_fwd.compile(*samples, 1, config=self.config)
+            graphs.extend((self.prefill, self.decode))
+        if self.enable_mixed or include_reference_graphs:
+            self.mixed = mixed_fwd.compile(
+                *samples, torch.empty(BATCH + 1, dtype=torch.int32, device="meta"),
+                torch.empty(BATCH, dtype=torch.int32, device="meta"),
+                1, config=self.config)
+            graphs.append(self.mixed)
         self.rope = rotary_tables(self.model_root)
         if self.rope["cos"].shape != (CONTEXT, 64) or self.rope["sin"].shape != (CONTEXT, 64):
             raise ValueError("Invalid RoPE table")
         self._buffers()
-        self.worker = DistributedWorker([self.prefill, self.decode], config=self.config)
+        self.worker = DistributedWorker(graphs, config=self.config)
         try:
             for _, host in TextWeights(self.model_root).banks():
                 self.banks.append(self.worker.alloc_tensor(tuple(host.shape), host.dtype, init=host))
@@ -254,7 +273,21 @@ class ModelRunner:
     def run_batch(self, slots: list[BatchSlot]) -> list[int | None]:
         if self.worker is None or not (1 <= len(slots) <= BATCH):
             raise RuntimeError("Invalid model batch")
-        self._compact(slots)
+        graph_name = select_tp1_graph(
+            [slot.phase for slot in slots], [len(slot.token_ids) for slot in slots],
+            self.enable_mixed, capacity=BATCH, rows=ROWS)
+        if graph_name == "mixed":
+            graph = self.mixed
+        elif graph_name == "prefill":
+            graph = self.prefill
+        else:
+            graph = self.decode
+        if graph is None:
+            raise RuntimeError(
+                f"Graph {graph_name!r} was not loaded; start with "
+                "include_reference_graphs=True to compare execution paths")
+        if graph_name != "mixed":
+            self._compact(slots)
         ids, cos, sin = self.ids, self.cos, self.sin
         masks, counts, offsets, tables = self.masks, self.counts, self.offsets, self.tables
         ids.zero_()
@@ -279,13 +312,20 @@ class ModelRunner:
             masks[index] = self._mask(count, position)
             counts[index], offsets[index] = count, position
             tables[index] = self.cache.table(resident.pages)
-        graph = self.prefill if any(slot.phase == "prefill" for slot in slots) else self.decode
+            self.state_slots[index] = resident.slot
         if self.on_activation is not None:
             self.on_activation("graph_start", {"time_ns": time.monotonic_ns(),
                                                "device": self.device_id,
                                                "phases": [slot.phase for slot in slots]})
+        extra_args = ()
+        if graph_name == "mixed":
+            boundaries = packed_token_offsets([len(slot.token_ids) for slot in slots])
+            self.packed_offsets.fill_(boundaries[-1])
+            self.packed_offsets[:len(boundaries)] = torch.tensor(boundaries, dtype=torch.int32)
+            extra_args = (self.packed_offsets, self.state_slots)
         self.worker.run(graph, ids, *self.banks, cos, sin, masks, counts, offsets,
-                        *self.resident, tables, self.traces, self.logits, len(slots), config=self.config)
+                        *self.resident, tables, self.traces, self.logits, *extra_args,
+                        len(slots), config=self.config)
         if self.on_activation is not None:
             self.on_activation("graph_end", {"time_ns": time.monotonic_ns(),
                                              "device": self.device_id})
@@ -297,12 +337,12 @@ class ModelRunner:
             if self.allow_prefix_hits and slot.phase == "prefill" and end in (64, 256):
                 prefix_tokens = slot.request.prompt_ids[:end]
                 if tuple(prefix_tokens) not in self.cache.prefixes:
-                    conv, recurrent = self._read_state(index)
+                    conv, recurrent = self._read_state(resident.slot)
                     self.cache.store_prefix(prefix_tokens, resident.pages, conv, recurrent)
             if slot.phase == "prefill" and not slot.completes_prefill:
                 output.append(None)
             else:
-                row = self._logit_row(index, len(slot.token_ids) - 1)
+                row = self._logit_row(resident.slot, len(slot.token_ids) - 1)
                 output.append(int(row.float().argmax()))
         self._sample_memory()
         return output

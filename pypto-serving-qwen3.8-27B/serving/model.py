@@ -746,6 +746,378 @@ def rank_prefill_fwd(input_ids: pl.Tensor[[BATCH, ROWS], pl.INT32], embedding: p
             conv_slot, recurrent_slot, key_pool, value_pool, trace_slot, logits_slot = full_step_inline(ids, embedding, final_gamma, lm_head, input_gamma, post_gamma, mlp_gate_weight, mlp_up_weight, mlp_down_weight, delta_qkv_weight, delta_z_weight, delta_a_weight, delta_b_weight, delta_conv_weight, delta_a_log, delta_dt_bias, delta_norm_weight, delta_out_weight, full_q_weight, full_k_weight, full_v_weight, full_q_gamma, full_k_gamma, full_out_weight, cos_slot, sin_slot, mask_slot, pl.read(token_counts, [batch]), pl.read(cache_offsets, [batch]), conv_slot, recurrent_slot, key_pool, value_pool, table_slot, trace_slot, logits_slot)
     return (conv_states, recurrent_states, key_pool, value_pool, traces, logits)
 
+
+# Buffer capacity and compute tile size are independent: partial batches only
+# launch enough row tiles for their effective token count.
+MIXED_ROWS = BATCH * ROWS
+MIXED_TILE_ROWS = 32
+mixed_INPUT = pl.dynamic("QWEN_PACKED_INPUT")
+mixed_OUTPUT = pl.dynamic("QWEN_PACKED_OUTPUT")
+
+@pl.jit.inline(auto_scope=False)
+def mixed_linear_projection_inline(hidden: pl.Tensor[[MIXED_ROWS, mixed_INPUT], pl.BF16], weight: pl.Tensor[[mixed_OUTPUT, mixed_INPUT], pl.BF16], result: pl.Tensor[[MIXED_ROWS, mixed_OUTPUT], pl.BF16], valid_rows: pl.Scalar[pl.INT32]):
+    output_columns = pl.tensor.dim(weight, 0)
+    input_columns = pl.tensor.dim(weight, 1)
+    for row_block in pl.range((valid_rows + MIXED_TILE_ROWS - 1) // MIXED_TILE_ROWS):
+        with pl.scope():
+            row_start = row_block * MIXED_TILE_ROWS
+            with pl.spmd(output_columns // linear_OUTPUT_TILE, name_hint='qwen_mixed_projection'):
+                projection_start = pl.tile.get_block_idx() * linear_OUTPUT_TILE
+                projection_accumulator = pl.create_tensor([MIXED_TILE_ROWS, linear_OUTPUT_TILE], dtype=pl.FP32)
+                for projection_chunk in pl.pipeline(0, input_columns // linear_K_TILE, stage=2):
+                    projection_k_start = projection_chunk * linear_K_TILE
+                    projection_hidden_tile = pl.slice(hidden, [MIXED_TILE_ROWS, linear_K_TILE], [row_start, projection_k_start])
+                    projection_weight_tile = pl.slice(weight, [linear_OUTPUT_TILE, linear_K_TILE], [projection_start, projection_k_start])
+                    projection_accumulator = pl.matmul_acc(projection_accumulator, projection_hidden_tile, projection_weight_tile, b_trans=True, init_cond=projection_chunk == 0)
+                result[row_start:row_start + MIXED_TILE_ROWS, projection_start:projection_start + linear_OUTPUT_TILE] = pl.cast(projection_accumulator, pl.BF16, mode='rint')
+    return result
+
+@pl.jit.inline
+def mixed_rmsnorm_inline(hidden: pl.Tensor[[MIXED_ROWS, HIDDEN], pl.BF16], gamma: pl.Tensor[[1, HIDDEN], pl.FP32], output: pl.Tensor[[MIXED_ROWS, HIDDEN], pl.BF16], valid_rows: pl.Scalar[pl.INT32]):
+    for norm_block in pl.range((valid_rows + MIXED_TILE_ROWS - 1) // MIXED_TILE_ROWS):
+        with pl.spmd(MIXED_TILE_ROWS // rmsnorm_ROWS, name_hint='qwen_packed_rmsnorm'):
+            row_start = norm_block * MIXED_TILE_ROWS + pl.tile.get_block_idx() * rmsnorm_ROWS
+            square_sum = pl.full([1, rmsnorm_ROWS], dtype=pl.FP32, value=0.0)
+            for chunk_index in pl.range(rmsnorm_HIDDEN // rmsnorm_CHUNK):
+                column = chunk_index * rmsnorm_CHUNK
+                source = pl.cast(pl.slice(hidden, [rmsnorm_ROWS, rmsnorm_CHUNK], [row_start, column]), pl.FP32)
+                square_sum = pl.add(square_sum, pl.reshape(pl.row_sum(pl.mul(source, source)), [1, rmsnorm_ROWS]))
+            inverse = pl.reshape(pl.rsqrt(pl.add(pl.mul(square_sum, 1.0 / rmsnorm_HIDDEN), 1e-06), high_precision=True), [rmsnorm_ROWS, 1])
+            for chunk_index in pl.range(rmsnorm_HIDDEN // rmsnorm_CHUNK):
+                column = chunk_index * rmsnorm_CHUNK
+                source = pl.cast(pl.slice(hidden, [rmsnorm_ROWS, rmsnorm_CHUNK], [row_start, column]), pl.FP32)
+                weight = pl.slice(gamma, [1, rmsnorm_CHUNK], [0, column])
+                normalized = pl.col_expand_mul(pl.row_expand_mul(source, inverse), weight)
+                output[row_start:row_start + rmsnorm_ROWS, column:column + rmsnorm_CHUNK] = pl.cast(normalized, pl.BF16, mode='rint')
+    return output
+
+@pl.jit.inline
+def mixed_zero_tail_inline(tensor: pl.Tensor[[MIXED_ROWS, mixed_OUTPUT], pl.BF16], valid_rows: pl.Scalar[pl.INT32]):
+    width = pl.tensor.dim(tensor, 1)
+    with pl.spmd(MIXED_TILE_ROWS * (width // 128), name_hint='qwen_packed_zero_tail'):
+        task = pl.tile.get_block_idx()
+        row = valid_rows + task // (width // 128)
+        column = task % (width // 128) * 128
+        if row < (valid_rows + MIXED_TILE_ROWS - 1) // MIXED_TILE_ROWS * MIXED_TILE_ROWS:
+            tensor[row:row + 1, column:column + 128] = pl.full([1, 128], dtype=pl.BF16, value=0.0)
+    return tensor
+
+@pl.jit.inline
+def mixed_residual_inline(left: pl.Tensor, right: pl.Tensor, output: pl.Tensor, valid_rows: pl.Scalar[pl.INT32]):
+    for block in pl.range((valid_rows + MIXED_TILE_ROWS - 1) // MIXED_TILE_ROWS):
+        with pl.spmd(MIXED_TILE_ROWS * (HIDDEN // residual_TILE), name_hint='qwen_packed_residual'):
+            task = pl.tile.get_block_idx()
+            row = block * MIXED_TILE_ROWS + task // (HIDDEN // residual_TILE)
+            column = task % (HIDDEN // residual_TILE) * residual_TILE
+            if row < valid_rows:
+                a = pl.cast(pl.slice(left, [1, residual_TILE], [row, column]), pl.FP32)
+                b = pl.cast(pl.slice(right, [1, residual_TILE], [row, column]), pl.FP32)
+                output[row:row + 1, column:column + residual_TILE] = pl.cast(pl.add(a, b), pl.BF16, mode='rint')
+            else:
+                output[row:row + 1, column:column + residual_TILE] = pl.full([1, residual_TILE], dtype=pl.BF16, value=0.0)
+    return output
+
+@pl.jit.inline
+def mixed_delta_gate_inline(core: pl.Tensor, z_projection: pl.Tensor, norm_weight: pl.Tensor, gated: pl.Tensor, packed_start: pl.Scalar[pl.INT32], token_count: pl.Scalar[pl.INT32]):
+    gate_rows = pl.create_tensor([delta_window16_ROWS * delta_window16_HEADS, delta_window16_DIM], dtype=pl.BF16)
+    with pl.spmd(delta_window16_ROWS * delta_window16_HEADS, name_hint='qwen_window_z_gate'):
+        row = pl.tile.get_block_idx()
+        token = row // delta_window16_HEADS
+        head = row % delta_window16_HEADS
+        gate_rows[row:row + 1, 0:delta_window16_DIM] = pl.slice(z_projection, [1, delta_window16_DIM], [token, head * delta_window16_DIM])
+    core_rows = pl.reshape(core, [delta_window16_ROWS * delta_window16_HEADS, delta_window16_DIM])
+    with pl.spmd(delta_window16_ROWS * delta_window16_HEADS // delta_window16_NORM_TILE, name_hint='qwen_window_gated_rmsnorm'):
+        row = pl.tile.get_block_idx() * delta_window16_NORM_TILE
+        if row // DELTA_HEADS < token_count:
+            source = pl.cast(pl.slice(core_rows, [delta_window16_NORM_TILE, delta_window16_DIM], [row, 0]), pl.FP32)
+            gate_tile = pl.cast(pl.slice(gate_rows, [delta_window16_NORM_TILE, delta_window16_DIM], [row, 0]), pl.FP32)
+            weight_tile = pl.cast(pl.slice(norm_weight, [1, gated_norm_DIM], [0, 0]), pl.FP32)
+            variance = pl.mul(pl.row_sum(pl.mul(source, source)), 1.0 / delta_window16_DIM)
+            inverse = pl.rsqrt(pl.add(variance, 1e-06), high_precision=True)
+            normalized = pl.cast(pl.row_expand_mul(source, inverse), pl.BF16, mode='rint')
+            weighted = pl.cast(pl.col_expand_mul(pl.cast(normalized, pl.FP32), weight_tile), pl.BF16, mode='rint')
+            sigmoid = pl.div(gate_tile, pl.add(pl.exp(pl.neg(gate_tile)), 1.0))
+            packed_row = packed_start + row // DELTA_HEADS
+            packed_column = row % DELTA_HEADS * DELTA_DIM
+            result = pl.cast(pl.mul(pl.cast(weighted, pl.FP32), sigmoid), pl.BF16, mode='rint')
+            gated[packed_row:packed_row + 1, packed_column:packed_column + delta_window16_NORM_TILE * DELTA_DIM] = pl.reshape(result, [1, delta_window16_NORM_TILE * DELTA_DIM])
+    return gated
+
+@pl.jit.inline
+def mixed_full_prepare_inline(q_projected: pl.Tensor[[ROWS, FULL_Q_PROJECTION], pl.BF16], k_projected: pl.Tensor[[ROWS, FULL_KV_WIDTH], pl.BF16], q_gamma: pl.Tensor[[1, FULL_HEAD_DIM], pl.FP32], k_gamma: pl.Tensor[[1, FULL_HEAD_DIM], pl.FP32], cos: pl.Tensor[[ROWS, ROTARY], pl.BF16], sin: pl.Tensor[[ROWS, ROTARY], pl.BF16], q_norm: pl.Tensor, k_norm: pl.Tensor, q_rot: pl.Tensor, k_rot: pl.Tensor, gate: pl.Tensor):
+    with pl.spmd(attention3_prepare_Q_HEADS, name_hint='qwen_attention_query_norm'):
+        head = pl.tile.get_block_idx()
+        projection_start = head * attention3_prepare_HEAD_DIM * 2
+        result_start = head * attention3_prepare_HEAD_DIM
+        raw = pl.slice(q_projected, [attention3_prepare_ROWS, attention3_prepare_HEAD_DIM], [0, projection_start])
+        normalized = pl.create_tensor([attention3_prepare_ROWS, attention3_prepare_HEAD_DIM], dtype=pl.BF16)
+        normalized = attention3_prepare_normalize_head_inline(raw, q_gamma, normalized)
+        q_norm[0:attention3_prepare_ROWS, result_start:result_start + attention3_prepare_HEAD_DIM] = normalized
+        gate[0:attention3_prepare_ROWS, result_start:result_start + attention3_prepare_HEAD_DIM] = pl.slice(q_projected, [attention3_prepare_ROWS, attention3_prepare_HEAD_DIM], [0, projection_start + attention3_prepare_HEAD_DIM])
+        rotated = pl.create_tensor([attention3_prepare_ROWS, attention3_prepare_HEAD_DIM], dtype=pl.BF16)
+        rotated = attention3_prepare_rotary_head_inline(normalized, cos, sin, rotated)
+        q_rot[0:attention3_prepare_ROWS, result_start:result_start + attention3_prepare_HEAD_DIM] = rotated
+    with pl.spmd(attention3_prepare_KV_HEADS, name_hint='qwen_attention_key_norm'):
+        head = pl.tile.get_block_idx()
+        start = head * attention3_prepare_HEAD_DIM
+        raw = pl.slice(k_projected, [attention3_prepare_ROWS, attention3_prepare_HEAD_DIM], [0, start])
+        normalized = pl.create_tensor([attention3_prepare_ROWS, attention3_prepare_HEAD_DIM], dtype=pl.BF16)
+        normalized = attention3_prepare_normalize_head_inline(raw, k_gamma, normalized)
+        k_norm[0:attention3_prepare_ROWS, start:start + attention3_prepare_HEAD_DIM] = normalized
+        rotated = pl.create_tensor([attention3_prepare_ROWS, attention3_prepare_HEAD_DIM], dtype=pl.BF16)
+        rotated = attention3_prepare_rotary_head_inline(normalized, cos, sin, rotated)
+        k_rot[0:attention3_prepare_ROWS, start:start + attention3_prepare_HEAD_DIM] = rotated
+    return (q_norm, k_norm, q_rot, k_rot, gate)
+
+@pl.jit.inline
+def mixed_full_core_inline(query: pl.Tensor, key_cache: pl.Tensor, value_cache: pl.Tensor, gate: pl.Tensor, mask: pl.Tensor, logits_buffer: pl.Tensor, probability_buffer: pl.Tensor, gated_output: pl.Tensor, packed_start: pl.Scalar[pl.INT32], token_count: pl.Scalar[pl.INT32]):
+    with pl.spmd(attention512_core_Q_HEADS, name_hint='qwen_attention512_scores'):
+        score_head = pl.tile.get_block_idx()
+        score_kv_head = score_head // (attention512_core_Q_HEADS // attention512_core_KV_HEADS)
+        score_start = score_head * attention512_core_HEAD_DIM
+        score_q = pl.slice(query, [attention512_core_ROWS, attention512_core_HEAD_DIM], [0, score_start])
+        for score_block in pl.range(attention512_core_CONTEXT // attention512_core_KEY_BLOCK):
+            score_key_start = score_block * attention512_core_KEY_BLOCK
+            score_k = pl.reshape(pl.slice(key_cache, [1, attention512_core_KEY_BLOCK, attention512_core_HEAD_DIM], [score_kv_head, score_key_start, 0]), [attention512_core_KEY_BLOCK, attention512_core_HEAD_DIM])
+            score_raw = pl.matmul(score_q, score_k, pl.FP32, b_trans=True)
+            score_rounded = pl.cast(score_raw, pl.BF16, mode='rint')
+            score_scaled = pl.cast(pl.mul(pl.cast(score_rounded, pl.FP32), attention512_core_HEAD_DIM ** (-0.5)), pl.BF16, mode='rint')
+            score_mask = pl.slice(mask, [attention512_core_ROWS, attention512_core_KEY_BLOCK], [0, score_key_start])
+            logits_buffer[score_head * attention512_core_ROWS:(score_head + 1) * attention512_core_ROWS, score_key_start:score_key_start + attention512_core_KEY_BLOCK] = pl.add(pl.cast(score_scaled, pl.FP32), score_mask)
+    with pl.spmd(attention512_core_Q_HEADS * (attention512_core_ROWS // 8), name_hint='qwen_attention512_softmax'):
+        softmax_row = pl.tile.get_block_idx() * 8
+        softmax_logits = pl.slice(logits_buffer, [8, attention512_core_CONTEXT], [softmax_row, 0])
+        softmax_exp = pl.exp(pl.row_expand_sub(softmax_logits, pl.row_max(softmax_logits)))
+        probability_buffer[softmax_row:softmax_row + 8, 0:attention512_core_CONTEXT] = pl.cast(pl.row_expand_div(softmax_exp, pl.row_sum(softmax_exp)), pl.BF16, mode='rint')
+    with pl.spmd(attention512_core_Q_HEADS, name_hint='qwen_attention512_weighted'):
+        weighted_head = pl.tile.get_block_idx()
+        weighted_kv_head = weighted_head // (attention512_core_Q_HEADS // attention512_core_KV_HEADS)
+        weighted_start = weighted_head * attention512_core_HEAD_DIM
+        weighted_sum = pl.full([attention512_core_ROWS, attention512_core_HEAD_DIM], dtype=pl.FP32, value=0.0)
+        for weighted_block in pl.range(attention512_core_CONTEXT // attention512_core_KEY_BLOCK):
+            weighted_key_start = weighted_block * attention512_core_KEY_BLOCK
+            weighted_probs = pl.slice(probability_buffer, [attention512_core_ROWS, attention512_core_KEY_BLOCK], [weighted_head * attention512_core_ROWS, weighted_key_start])
+            weighted_values = pl.reshape(pl.slice(value_cache, [1, attention512_core_KEY_BLOCK, attention512_core_HEAD_DIM], [weighted_kv_head, weighted_key_start, 0]), [attention512_core_KEY_BLOCK, attention512_core_HEAD_DIM])
+            weighted_sum = pl.add(weighted_sum, pl.matmul(weighted_probs, weighted_values, pl.FP32))
+        weighted = pl.cast(weighted_sum, pl.BF16, mode='rint')
+        gate_tile = pl.cast(pl.slice(gate, [attention512_core_ROWS, attention512_core_HEAD_DIM], [0, weighted_start]), pl.FP32)
+        sigmoid = pl.cast(pl.recip(pl.add(pl.exp(pl.neg(gate_tile)), 1.0)), pl.BF16, mode='rint')
+        gated_tile = pl.cast(pl.mul(pl.cast(weighted, pl.FP32), pl.cast(sigmoid, pl.FP32)), pl.BF16, mode='rint')
+        for output_row in pl.range(token_count):
+            gated_output[packed_start + output_row:packed_start + output_row + 1, weighted_start:weighted_start + attention512_core_HEAD_DIM] = pl.slice(gated_tile, [1, attention512_core_HEAD_DIM], [output_row, 0])
+    return (logits_buffer, probability_buffer, gated_output)
+
+@pl.jit(auto_scope=False)
+def rank_mixed_fwd(input_ids: pl.Tensor[[BATCH, ROWS], pl.INT32], embedding: pl.Tensor[[VOCAB, HIDDEN], pl.BF16], final_gamma: pl.Tensor[[1, HIDDEN], pl.FP32], lm_head: pl.Tensor[[VOCAB, HIDDEN], pl.BF16], input_gamma: pl.Tensor[[64, HIDDEN], pl.FP32], post_gamma: pl.Tensor[[64, HIDDEN], pl.FP32], mlp_gate_weight: pl.Tensor[[64 * INTERMEDIATE, HIDDEN], pl.BF16], mlp_up_weight: pl.Tensor[[64 * INTERMEDIATE, HIDDEN], pl.BF16], mlp_down_weight: pl.Tensor[[64 * HIDDEN, INTERMEDIATE], pl.BF16], delta_qkv_weight: pl.Tensor[[48 * QKV, HIDDEN], pl.BF16], delta_z_weight: pl.Tensor[[48 * VALUE_WIDTH, HIDDEN], pl.BF16], delta_a_weight: pl.Tensor[[48 * 128, HIDDEN], pl.BF16], delta_b_weight: pl.Tensor[[48 * 128, HIDDEN], pl.BF16], delta_conv_weight: pl.Tensor[[48 * 4, QKV], pl.BF16], delta_a_log: pl.Tensor[[48, 64], pl.BF16], delta_dt_bias: pl.Tensor[[48, 64], pl.BF16], delta_norm_weight: pl.Tensor[[48, DELTA_DIM], pl.BF16], delta_out_weight: pl.Tensor[[48 * HIDDEN, VALUE_WIDTH], pl.BF16], full_q_weight: pl.Tensor[[16 * FULL_Q_PROJECTION, HIDDEN], pl.BF16], full_k_weight: pl.Tensor[[16 * FULL_KV_WIDTH, HIDDEN], pl.BF16], full_v_weight: pl.Tensor[[16 * FULL_KV_WIDTH, HIDDEN], pl.BF16], full_q_gamma: pl.Tensor[[16, FULL_HEAD_DIM], pl.FP32], full_k_gamma: pl.Tensor[[16, FULL_HEAD_DIM], pl.FP32], full_out_weight: pl.Tensor[[16 * HIDDEN, FULL_Q_WIDTH], pl.BF16], cos: pl.Tensor[[BATCH, ROWS, ROTARY], pl.BF16], sin: pl.Tensor[[BATCH, ROWS, ROTARY], pl.BF16], mask: pl.Tensor[[BATCH, ROWS, CONTEXT], pl.FP32], token_counts: pl.Tensor[[BATCH], pl.INT32], cache_offsets: pl.Tensor[[BATCH], pl.INT32], conv_states: pl.InOut[pl.Tensor[[BATCH, 48, 4, QKV], pl.BF16]], recurrent_states: pl.InOut[pl.Tensor[[BATCH, 48, DELTA_HEADS, DELTA_DIM, DELTA_DIM], pl.FP32]], key_pool: pl.InOut[pl.Tensor[[16, 4, POOL_BLOCKS, BLOCK_SIZE, FULL_HEAD_DIM], pl.BF16]], value_pool: pl.InOut[pl.Tensor[[16, 4, POOL_BLOCKS, BLOCK_SIZE, FULL_HEAD_DIM], pl.BF16]], block_tables: pl.Tensor[[BATCH, CONTEXT // BLOCK_SIZE], pl.INT32], traces: pl.Out[pl.Tensor[[BATCH, 66, ROWS, HIDDEN], pl.BF16]], logits: pl.Out[pl.Tensor[[BATCH, ROWS, VOCAB], pl.BF16]], packed_offsets: pl.Tensor[[BATCH + 1], pl.INT32], state_slots: pl.Tensor[[BATCH], pl.INT32], active_count: pl.Scalar[pl.INT32]):
+    valid_rows = pl.read(packed_offsets, [active_count])
+    # Reuse the batch workspace across layers; request cores keep local scratch.
+    running = pl.create_tensor([MIXED_ROWS, HIDDEN], dtype=pl.BF16)
+    norm_packed = pl.create_tensor([MIXED_ROWS, HIDDEN], dtype=pl.BF16)
+    gated_packed = pl.create_tensor([MIXED_ROWS, VALUE_WIDTH], dtype=pl.BF16)
+    qkv_packed = pl.create_tensor([MIXED_ROWS, QKV], dtype=pl.BF16)
+    z_packed = pl.create_tensor([MIXED_ROWS, VALUE_WIDTH], dtype=pl.BF16)
+    a_packed = pl.create_tensor([MIXED_ROWS, 128], dtype=pl.BF16)
+    b_packed = pl.create_tensor([MIXED_ROWS, 128], dtype=pl.BF16)
+    q_projected_packed = pl.create_tensor([MIXED_ROWS, FULL_Q_PROJECTION], dtype=pl.BF16)
+    k_projected_packed = pl.create_tensor([MIXED_ROWS, FULL_KV_WIDTH], dtype=pl.BF16)
+    value_packed = pl.create_tensor([MIXED_ROWS, FULL_KV_WIDTH], dtype=pl.BF16)
+    attention_packed = pl.create_tensor([MIXED_ROWS, HIDDEN], dtype=pl.BF16)
+    residual_packed = pl.create_tensor([MIXED_ROWS, HIDDEN], dtype=pl.BF16)
+    mlp_gate = pl.create_tensor([MIXED_ROWS, INTERMEDIATE], dtype=pl.BF16)
+    mlp_up = pl.create_tensor([MIXED_ROWS, INTERMEDIATE], dtype=pl.BF16)
+    mlp_middle = pl.create_tensor([MIXED_ROWS, INTERMEDIATE], dtype=pl.BF16)
+    mlp_output = pl.create_tensor([MIXED_ROWS, HIDDEN], dtype=pl.BF16)
+    normalized = pl.create_tensor([MIXED_ROWS, HIDDEN], dtype=pl.BF16)
+    packed_logits = pl.create_tensor([MIXED_ROWS, VOCAB], dtype=pl.BF16)
+    mlp_norm_packed = pl.create_tensor([MIXED_ROWS, HIDDEN], dtype=pl.BF16)
+    with pl.spmd(MIXED_ROWS * (HIDDEN // 128), name_hint='qwen_mixed_token_embedding'):
+        token_embedding_task = pl.tile.get_block_idx()
+        token_embedding_packed_row = token_embedding_task // (HIDDEN // 128)
+        token_embedding_batch = token_embedding_packed_row // ROWS
+        token_embedding_row = token_embedding_packed_row % ROWS
+        token_embedding_column = token_embedding_task % (HIDDEN // 128) * 128
+        if token_embedding_batch < active_count and token_embedding_row < pl.read(token_counts, [token_embedding_batch]):
+            token_embedding_token_id = pl.read(input_ids, [token_embedding_batch, token_embedding_row])
+            token_embedding_target = pl.read(packed_offsets, [token_embedding_batch]) + token_embedding_row
+            token_embedding_state = pl.read(state_slots, [token_embedding_batch])
+            token_embedding_tile = pl.slice(embedding, [1, 128], [token_embedding_token_id, token_embedding_column])
+            running[token_embedding_target:token_embedding_target + 1, token_embedding_column:token_embedding_column + 128] = token_embedding_tile
+            traces[token_embedding_state:token_embedding_state + 1, 0:1, token_embedding_row:token_embedding_row + 1, token_embedding_column:token_embedding_column + 128] = pl.reshape(token_embedding_tile, [1, 1, 1, 128])
+    # Both buffers receive valid rows only; their tail stays zero for all layers.
+    running = mixed_zero_tail_inline(running, valid_rows)
+    gated_packed = mixed_zero_tail_inline(gated_packed, valid_rows)
+    for layer in pl.range(64):
+        input_gamma_layer: pl.Tensor[[1, HIDDEN], pl.FP32] = pl.slice(input_gamma, [1, HIDDEN], [layer, 0])
+        post_gamma_layer: pl.Tensor[[1, HIDDEN], pl.FP32] = pl.slice(post_gamma, [1, HIDDEN], [layer, 0])
+        mlp_gate_layer: pl.Tensor[[INTERMEDIATE, HIDDEN], pl.BF16] = pl.slice(mlp_gate_weight, [INTERMEDIATE, HIDDEN], [layer * INTERMEDIATE, 0])
+        mlp_up_layer: pl.Tensor[[INTERMEDIATE, HIDDEN], pl.BF16] = pl.slice(mlp_up_weight, [INTERMEDIATE, HIDDEN], [layer * INTERMEDIATE, 0])
+        mlp_down_layer: pl.Tensor[[HIDDEN, INTERMEDIATE], pl.BF16] = pl.slice(mlp_down_weight, [HIDDEN, INTERMEDIATE], [layer * HIDDEN, 0])
+
+        norm_packed = mixed_rmsnorm_inline(running, input_gamma_layer, norm_packed, valid_rows)
+        if layer % 4 < 3:
+            linear = layer - layer // 4
+            qkv_weight_layer: pl.Tensor[[QKV, HIDDEN], pl.BF16] = pl.slice(delta_qkv_weight, [QKV, HIDDEN], [linear * QKV, 0])
+            z_weight_layer: pl.Tensor[[VALUE_WIDTH, HIDDEN], pl.BF16] = pl.slice(delta_z_weight, [VALUE_WIDTH, HIDDEN], [linear * VALUE_WIDTH, 0])
+            a_weight_layer: pl.Tensor[[128, HIDDEN], pl.BF16] = pl.slice(delta_a_weight, [128, HIDDEN], [linear * 128, 0])
+            b_weight_layer: pl.Tensor[[128, HIDDEN], pl.BF16] = pl.slice(delta_b_weight, [128, HIDDEN], [linear * 128, 0])
+            conv_weight_layer: pl.Tensor[[4, QKV], pl.BF16] = pl.slice(delta_conv_weight, [4, QKV], [linear * 4, 0])
+            a_log_layer: pl.Tensor[[1, 64], pl.BF16] = pl.slice(delta_a_log, [1, 64], [linear, 0])
+            dt_bias_layer: pl.Tensor[[1, 64], pl.BF16] = pl.slice(delta_dt_bias, [1, 64], [linear, 0])
+            delta_norm_layer: pl.Tensor[[1, DELTA_DIM], pl.BF16] = pl.slice(delta_norm_weight, [1, DELTA_DIM], [linear, 0])
+            delta_out_layer: pl.Tensor[[HIDDEN, VALUE_WIDTH], pl.BF16] = pl.slice(delta_out_weight, [HIDDEN, VALUE_WIDTH], [linear * HIDDEN, 0])
+            qkv_packed = mixed_linear_projection_inline(norm_packed, qkv_weight_layer, qkv_packed, valid_rows)
+            z_packed = mixed_linear_projection_inline(norm_packed, z_weight_layer, z_packed, valid_rows)
+            a_packed = mixed_linear_projection_inline(norm_packed, a_weight_layer, a_packed, valid_rows)
+            b_packed = mixed_linear_projection_inline(norm_packed, b_weight_layer, b_packed, valid_rows)
+            for batch in pl.range(active_count):
+                with pl.scope():
+                    packed_start = pl.read(packed_offsets, [batch])
+                    token_count = pl.read(token_counts, [batch])
+                    state_slot = pl.read(state_slots, [batch])
+                    # Select one outer dimension at a time to keep reshape views contiguous.
+                    recurrent_slot_tensor = pl.slice(recurrent_states, [1, 48, DELTA_HEADS, DELTA_DIM, DELTA_DIM], [state_slot, 0, 0, 0, 0])
+                    recurrent_slot = pl.reshape(recurrent_slot_tensor, [48, DELTA_HEADS, DELTA_DIM, DELTA_DIM])
+                    recurrent_source_tensor = pl.slice(recurrent_slot, [1, DELTA_HEADS, DELTA_DIM, DELTA_DIM], [linear, 0, 0, 0])
+                    recurrent: pl.Tensor[[DELTA_HEADS, DELTA_DIM, DELTA_DIM], pl.FP32] = pl.reshape(recurrent_source_tensor, [DELTA_HEADS, DELTA_DIM, DELTA_DIM])
+                    conv_slot_tensor = pl.slice(conv_states, [1, 48, 4, QKV], [state_slot, 0, 0, 0])
+                    conv_slot = pl.reshape(conv_slot_tensor, [48, 4, QKV])
+                    conv_source_tensor = pl.slice(conv_slot, [1, 4, QKV], [linear, 0, 0])
+                    conv_state: pl.Tensor[[4, QKV], pl.BF16] = pl.reshape(conv_source_tensor, [4, QKV])
+                    qkv: pl.Tensor[[ROWS, QKV], pl.BF16] = pl.slice(qkv_packed, [ROWS, QKV], [packed_start, 0])
+                    z: pl.Tensor[[ROWS, VALUE_WIDTH], pl.BF16] = pl.slice(z_packed, [ROWS, VALUE_WIDTH], [packed_start, 0])
+                    a: pl.Tensor[[ROWS, 128], pl.BF16] = pl.slice(a_packed, [ROWS, 128], [packed_start, 0])
+                    b: pl.Tensor[[ROWS, 128], pl.BF16] = pl.slice(b_packed, [ROWS, 128], [packed_start, 0])
+                    conv_output = pl.create_tensor([ROWS, QKV], dtype=pl.BF16)
+                    query = pl.create_tensor([ROWS, DELTA_HEADS, DELTA_DIM], dtype=pl.BF16)
+                    key = pl.create_tensor([ROWS, DELTA_HEADS, DELTA_DIM], dtype=pl.BF16)
+                    value = pl.create_tensor([ROWS, DELTA_HEADS, DELTA_DIM], dtype=pl.BF16)
+                    log_decay = pl.create_tensor([ROWS, DELTA_HEADS], dtype=pl.FP32)
+                    beta = pl.create_tensor([ROWS, DELTA_HEADS], dtype=pl.FP32)
+                    core = pl.create_tensor([ROWS, DELTA_HEADS, DELTA_DIM], dtype=pl.BF16)
+                    conv_output, conv_state = causal_conv_causal_conv_silu_inline(qkv, conv_weight_layer, conv_state, conv_output, token_count)
+                    query, key, value = delta_window16_expand_qkv_window16_inline(conv_output, query, key, value)
+                    gate_values = pl.create_tensor([ROWS, 64], dtype=pl.FP32)
+                    beta_bf16 = pl.create_tensor([ROWS, 64], dtype=pl.BF16)
+                    gate_values, beta_bf16 = delta_prepare_decay_beta_inline(a, b, a_log_layer, dt_bias_layer, gate_values, beta_bf16)
+                    with pl.spmd(ROWS, name_hint='qwen_full_delta_gate_unpad'):
+                        delta_gate_unpad_token = pl.tile.get_block_idx()
+                        log_decay[delta_gate_unpad_token:delta_gate_unpad_token + 1, 0:DELTA_HEADS] = pl.slice(gate_values, [1, DELTA_HEADS], [delta_gate_unpad_token, 0])
+                        beta[delta_gate_unpad_token:delta_gate_unpad_token + 1, 0:DELTA_HEADS] = pl.cast(pl.slice(beta_bf16, [1, DELTA_HEADS], [delta_gate_unpad_token, 0]), pl.FP32)
+                    core, recurrent = delta_window16_recurrence_window16_inline(query, key, value, log_decay, beta, recurrent, core, token_count)
+                    gated_packed = mixed_delta_gate_inline(core, z, delta_norm_layer, gated_packed, packed_start, token_count)
+            attention_weight = delta_out_layer
+        else:
+            full = layer // 4
+            q_weight_full: pl.Tensor[[FULL_Q_PROJECTION, HIDDEN], pl.BF16] = pl.slice(full_q_weight, [FULL_Q_PROJECTION, HIDDEN], [full * FULL_Q_PROJECTION, 0])
+            k_weight_full: pl.Tensor[[FULL_KV_WIDTH, HIDDEN], pl.BF16] = pl.slice(full_k_weight, [FULL_KV_WIDTH, HIDDEN], [full * FULL_KV_WIDTH, 0])
+            v_weight_full: pl.Tensor[[FULL_KV_WIDTH, HIDDEN], pl.BF16] = pl.slice(full_v_weight, [FULL_KV_WIDTH, HIDDEN], [full * FULL_KV_WIDTH, 0])
+            q_gamma_full: pl.Tensor[[1, FULL_HEAD_DIM], pl.FP32] = pl.slice(full_q_gamma, [1, FULL_HEAD_DIM], [full, 0])
+            k_gamma_full: pl.Tensor[[1, FULL_HEAD_DIM], pl.FP32] = pl.slice(full_k_gamma, [1, FULL_HEAD_DIM], [full, 0])
+            out_weight_full: pl.Tensor[[HIDDEN, FULL_Q_WIDTH], pl.BF16] = pl.slice(full_out_weight, [HIDDEN, FULL_Q_WIDTH], [full * HIDDEN, 0])
+            q_projected_packed = mixed_linear_projection_inline(norm_packed, q_weight_full, q_projected_packed, valid_rows)
+            k_projected_packed = mixed_linear_projection_inline(norm_packed, k_weight_full, k_projected_packed, valid_rows)
+            value_packed = mixed_linear_projection_inline(norm_packed, v_weight_full, value_packed, valid_rows)
+            for batch in pl.range(active_count):
+                with pl.scope():
+                    packed_start = pl.read(packed_offsets, [batch])
+                    token_count = pl.read(token_counts, [batch])
+                    state_slot = pl.read(state_slots, [batch])
+                    cache_offset = pl.read(cache_offsets, [batch])
+                    cos_source = pl.slice(cos, [1, ROWS, ROTARY], [batch, 0, 0])
+                    cos_slot = pl.reshape(cos_source, [ROWS, ROTARY])
+                    sin_source = pl.slice(sin, [1, ROWS, ROTARY], [batch, 0, 0])
+                    sin_slot = pl.reshape(sin_source, [ROWS, ROTARY])
+                    mask_source = pl.slice(mask, [1, ROWS, CONTEXT], [batch, 0, 0])
+                    mask_slot = pl.reshape(mask_source, [ROWS, CONTEXT])
+                    block_tables_source = pl.slice(block_tables, [1, CONTEXT // BLOCK_SIZE], [batch, 0])
+                    table_slot = pl.reshape(block_tables_source, [CONTEXT // BLOCK_SIZE])
+                    q_projected_slot: pl.Tensor[[ROWS, FULL_Q_PROJECTION], pl.BF16] = pl.slice(q_projected_packed, [ROWS, FULL_Q_PROJECTION], [packed_start, 0])
+                    k_projected_slot: pl.Tensor[[ROWS, FULL_KV_WIDTH], pl.BF16] = pl.slice(k_projected_packed, [ROWS, FULL_KV_WIDTH], [packed_start, 0])
+                    value_full: pl.Tensor[[ROWS, FULL_KV_WIDTH], pl.BF16] = pl.slice(value_packed, [ROWS, FULL_KV_WIDTH], [packed_start, 0])
+                    q_norm_full = pl.create_tensor([ROWS, FULL_Q_WIDTH], dtype=pl.BF16)
+                    k_norm_full = pl.create_tensor([ROWS, FULL_KV_WIDTH], dtype=pl.BF16)
+                    q_rot = pl.create_tensor([ROWS, FULL_Q_WIDTH], dtype=pl.BF16)
+                    k_rot = pl.create_tensor([ROWS, FULL_KV_WIDTH], dtype=pl.BF16)
+                    gate_full = pl.create_tensor([ROWS, FULL_Q_WIDTH], dtype=pl.BF16)
+                    q_norm_full, k_norm_full, q_rot, k_rot, gate_full = mixed_full_prepare_inline(q_projected_slot, k_projected_slot, q_gamma_full, k_gamma_full, cos_slot, sin_slot, q_norm_full, k_norm_full, q_rot, k_rot, gate_full)
+                    key_local = pl.create_tensor([4, CONTEXT, FULL_HEAD_DIM], dtype=pl.BF16)
+                    value_local = pl.create_tensor([4, CONTEXT, FULL_HEAD_DIM], dtype=pl.BF16)
+                    with pl.spmd(4 * (CONTEXT // BLOCK_SIZE), name_hint='qwen_full_load_paged_kv'):
+                        load_paged_kv_task = pl.tile.get_block_idx()
+                        load_paged_kv_head = load_paged_kv_task // (CONTEXT // BLOCK_SIZE)
+                        load_paged_kv_logical_block = load_paged_kv_task % (CONTEXT // BLOCK_SIZE)
+                        load_paged_kv_physical = pl.read(table_slot, [load_paged_kv_logical_block])
+                        load_paged_kv_row = load_paged_kv_logical_block * BLOCK_SIZE
+                        key_local[load_paged_kv_head:load_paged_kv_head + 1, load_paged_kv_row:load_paged_kv_row + BLOCK_SIZE, 0:FULL_HEAD_DIM] = pl.reshape(pl.slice(key_pool, [1, 1, 1, BLOCK_SIZE, FULL_HEAD_DIM], [full, load_paged_kv_head, load_paged_kv_physical, 0, 0]), [1, BLOCK_SIZE, FULL_HEAD_DIM])
+                        value_local[load_paged_kv_head:load_paged_kv_head + 1, load_paged_kv_row:load_paged_kv_row + BLOCK_SIZE, 0:FULL_HEAD_DIM] = pl.reshape(pl.slice(value_pool, [1, 1, 1, BLOCK_SIZE, FULL_HEAD_DIM], [full, load_paged_kv_head, load_paged_kv_physical, 0, 0]), [1, BLOCK_SIZE, FULL_HEAD_DIM])
+                    with pl.spmd(4, name_hint='qwen_full_update_kv'):
+                        update_kv_head = pl.tile.get_block_idx()
+                        update_kv_start = update_kv_head * FULL_HEAD_DIM
+                        for update_kv_token in pl.range(token_count):
+                            key_local[update_kv_head:update_kv_head + 1, cache_offset + update_kv_token:cache_offset + update_kv_token + 1, 0:FULL_HEAD_DIM] = pl.reshape(pl.slice(k_rot, [1, FULL_HEAD_DIM], [update_kv_token, update_kv_start]), [1, 1, FULL_HEAD_DIM])
+                            value_local[update_kv_head:update_kv_head + 1, cache_offset + update_kv_token:cache_offset + update_kv_token + 1, 0:FULL_HEAD_DIM] = pl.reshape(pl.slice(value_full, [1, FULL_HEAD_DIM], [update_kv_token, update_kv_start]), [1, 1, FULL_HEAD_DIM])
+                    scores = pl.create_tensor([24 * ROWS, CONTEXT], dtype=pl.FP32)
+                    probabilities = pl.create_tensor([24 * ROWS, CONTEXT], dtype=pl.BF16)
+                    scores, probabilities, gated_packed = mixed_full_core_inline(q_rot, key_local, value_local, gate_full, mask_slot, scores, probabilities, gated_packed, packed_start, token_count)
+                    with pl.spmd(4 * ROWS, name_hint='qwen_full_store_paged_kv'):
+                        store_paged_kv_task = pl.tile.get_block_idx()
+                        store_paged_kv_head = store_paged_kv_task // ROWS
+                        store_paged_kv_row = store_paged_kv_task % ROWS
+                        if store_paged_kv_row < token_count:
+                            store_paged_kv_position = cache_offset + store_paged_kv_row
+                            store_paged_kv_logical_block = store_paged_kv_position // BLOCK_SIZE
+                            store_paged_kv_physical = pl.read(table_slot, [store_paged_kv_logical_block])
+                            store_paged_kv_slot = store_paged_kv_position % BLOCK_SIZE
+                            key_pool[full:full + 1, store_paged_kv_head:store_paged_kv_head + 1, store_paged_kv_physical:store_paged_kv_physical + 1, store_paged_kv_slot:store_paged_kv_slot + 1, 0:FULL_HEAD_DIM] = pl.reshape(pl.slice(key_local, [1, 1, FULL_HEAD_DIM], [store_paged_kv_head, store_paged_kv_position, 0]), [1, 1, 1, 1, FULL_HEAD_DIM])
+                            value_pool[full:full + 1, store_paged_kv_head:store_paged_kv_head + 1, store_paged_kv_physical:store_paged_kv_physical + 1, store_paged_kv_slot:store_paged_kv_slot + 1, 0:FULL_HEAD_DIM] = pl.reshape(pl.slice(value_local, [1, 1, FULL_HEAD_DIM], [store_paged_kv_head, store_paged_kv_position, 0]), [1, 1, 1, 1, FULL_HEAD_DIM])
+            attention_weight = out_weight_full
+        attention_packed = mixed_linear_projection_inline(gated_packed, attention_weight, attention_packed, valid_rows)
+        residual_packed = mixed_residual_inline(running, attention_packed, residual_packed, valid_rows)
+        mlp_norm_packed = mixed_rmsnorm_inline(residual_packed, post_gamma_layer, mlp_norm_packed, valid_rows)
+        mlp_gate = mixed_linear_projection_inline(mlp_norm_packed, mlp_gate_layer, mlp_gate, valid_rows)
+        mlp_up = mixed_linear_projection_inline(mlp_norm_packed, mlp_up_layer, mlp_up, valid_rows)
+        for row_block in pl.range((valid_rows + MIXED_TILE_ROWS - 1) // MIXED_TILE_ROWS):
+            row_start = row_block * MIXED_TILE_ROWS
+            with pl.spmd(INTERMEDIATE // swiglu_CHANNEL_TILE, name_hint='qwen_mixed_swiglu'):
+                swiglu_column = pl.tile.get_block_idx() * swiglu_CHANNEL_TILE
+                swiglu_gate_tile = pl.cast(pl.slice(mlp_gate, [MIXED_TILE_ROWS, swiglu_CHANNEL_TILE], [row_start, swiglu_column]), pl.FP32)
+                swiglu_up_tile = pl.cast(pl.slice(mlp_up, [MIXED_TILE_ROWS, swiglu_CHANNEL_TILE], [row_start, swiglu_column]), pl.FP32)
+                swiglu_activated = pl.cast(pl.div(swiglu_gate_tile, pl.add(pl.exp(pl.neg(swiglu_gate_tile)), 1.0)), pl.BF16, mode='rint')
+                mlp_middle[row_start:row_start + MIXED_TILE_ROWS, swiglu_column:swiglu_column + swiglu_CHANNEL_TILE] = pl.cast(pl.mul(pl.cast(swiglu_activated, pl.FP32), swiglu_up_tile), pl.BF16, mode='rint')
+        mlp_output = mixed_linear_projection_inline(mlp_middle, mlp_down_layer, mlp_output, valid_rows)
+        with pl.spmd(active_count * ROWS * (HIDDEN // residual_TILE), name_hint='qwen_packed_layer_residual'):
+            residual_task = pl.tile.get_block_idx()
+            residual_batch = residual_task // (ROWS * (HIDDEN // residual_TILE))
+            residual_row = residual_task // (HIDDEN // residual_TILE) % ROWS
+            residual_column = residual_task % (HIDDEN // residual_TILE) * residual_TILE
+            if residual_row < pl.read(token_counts, [residual_batch]):
+                residual_packed_row = pl.read(packed_offsets, [residual_batch]) + residual_row
+                residual_state_slot = pl.read(state_slots, [residual_batch])
+                residual_residual_tile = pl.cast(pl.slice(residual_packed, [1, residual_TILE], [residual_packed_row, residual_column]), pl.FP32)
+                residual_mlp_tile = pl.cast(pl.slice(mlp_output, [1, residual_TILE], [residual_packed_row, residual_column]), pl.FP32)
+                residual_result = pl.cast(pl.add(residual_residual_tile, residual_mlp_tile), pl.BF16, mode='rint')
+                running[residual_packed_row:residual_packed_row + 1, residual_column:residual_column + residual_TILE] = residual_result
+                traces[residual_state_slot:residual_state_slot + 1, layer + 1:layer + 2, residual_row:residual_row + 1, residual_column:residual_column + residual_TILE] = pl.reshape(residual_result, [1, 1, 1, residual_TILE])
+    normalized = mixed_rmsnorm_inline(running, final_gamma, normalized, valid_rows)
+    packed_logits = mixed_linear_projection_inline(normalized, lm_head, packed_logits, valid_rows)
+    for batch in pl.range(active_count):
+        with pl.scope():
+            packed_start = pl.read(packed_offsets, [batch])
+            token_count = pl.read(token_counts, [batch])
+            state_slot = pl.read(state_slots, [batch])
+            with pl.spmd(ROWS, name_hint='qwen_packed_final_trace'):
+                row = pl.tile.get_block_idx()
+                if row < token_count:
+                    traces[state_slot:state_slot + 1, 65:66, row:row + 1, 0:HIDDEN] = pl.reshape(pl.slice(normalized, [1, HIDDEN], [packed_start + row, 0]), [1, 1, 1, HIDDEN])
+            with pl.spmd(ROWS * (VOCAB // linear_OUTPUT_TILE), name_hint='qwen_packed_store_logits'):
+                task = pl.tile.get_block_idx()
+                row = task // (VOCAB // linear_OUTPUT_TILE)
+                column = task % (VOCAB // linear_OUTPUT_TILE) * linear_OUTPUT_TILE
+                if row < token_count:
+                    logits[state_slot:state_slot + 1, row:row + 1, column:column + linear_OUTPUT_TILE] = pl.reshape(pl.slice(packed_logits, [1, linear_OUTPUT_TILE], [packed_start + row, column]), [1, 1, linear_OUTPUT_TILE])
+    return (conv_states, recurrent_states, key_pool, value_pool, traces, logits)
+
+
 @pl.jit
 def rank_decode_fwd(input_ids: pl.Tensor[[BATCH, ROWS], pl.INT32], embedding: pl.Tensor[[VOCAB, HIDDEN], pl.BF16], final_gamma: pl.Tensor[[1, HIDDEN], pl.FP32], lm_head: pl.Tensor[[VOCAB, HIDDEN], pl.BF16], input_gamma: pl.Tensor[[64, HIDDEN], pl.FP32], post_gamma: pl.Tensor[[64, HIDDEN], pl.FP32], mlp_gate_weight: pl.Tensor[[64 * INTERMEDIATE, HIDDEN], pl.BF16], mlp_up_weight: pl.Tensor[[64 * INTERMEDIATE, HIDDEN], pl.BF16], mlp_down_weight: pl.Tensor[[64 * HIDDEN, INTERMEDIATE], pl.BF16], delta_qkv_weight: pl.Tensor[[48 * QKV, HIDDEN], pl.BF16], delta_z_weight: pl.Tensor[[48 * VALUE_WIDTH, HIDDEN], pl.BF16], delta_a_weight: pl.Tensor[[48 * 128, HIDDEN], pl.BF16], delta_b_weight: pl.Tensor[[48 * 128, HIDDEN], pl.BF16], delta_conv_weight: pl.Tensor[[48 * 4, QKV], pl.BF16], delta_a_log: pl.Tensor[[48, 64], pl.BF16], delta_dt_bias: pl.Tensor[[48, 64], pl.BF16], delta_norm_weight: pl.Tensor[[48, DELTA_DIM], pl.BF16], delta_out_weight: pl.Tensor[[48 * HIDDEN, VALUE_WIDTH], pl.BF16], full_q_weight: pl.Tensor[[16 * FULL_Q_PROJECTION, HIDDEN], pl.BF16], full_k_weight: pl.Tensor[[16 * FULL_KV_WIDTH, HIDDEN], pl.BF16], full_v_weight: pl.Tensor[[16 * FULL_KV_WIDTH, HIDDEN], pl.BF16], full_q_gamma: pl.Tensor[[16, FULL_HEAD_DIM], pl.FP32], full_k_gamma: pl.Tensor[[16, FULL_HEAD_DIM], pl.FP32], full_out_weight: pl.Tensor[[16 * HIDDEN, FULL_Q_WIDTH], pl.BF16], cos: pl.Tensor[[BATCH, ROWS, ROTARY], pl.BF16], sin: pl.Tensor[[BATCH, ROWS, ROTARY], pl.BF16], mask: pl.Tensor[[BATCH, ROWS, CONTEXT], pl.FP32], token_counts: pl.Tensor[[BATCH], pl.INT32], cache_offsets: pl.Tensor[[BATCH], pl.INT32], conv_states: pl.InOut[pl.Tensor[[BATCH, 48, 4, QKV], pl.BF16]], recurrent_states: pl.InOut[pl.Tensor[[BATCH, 48, DELTA_HEADS, DELTA_DIM, DELTA_DIM], pl.FP32]], key_pool: pl.InOut[pl.Tensor[[16, 4, POOL_BLOCKS, BLOCK_SIZE, FULL_HEAD_DIM], pl.BF16]], value_pool: pl.InOut[pl.Tensor[[16, 4, POOL_BLOCKS, BLOCK_SIZE, FULL_HEAD_DIM], pl.BF16]], block_tables: pl.Tensor[[BATCH, CONTEXT // BLOCK_SIZE], pl.INT32], traces: pl.Out[pl.Tensor[[BATCH, 66, ROWS, HIDDEN], pl.BF16]], logits: pl.Out[pl.Tensor[[BATCH, ROWS, VOCAB], pl.BF16]], active_count: pl.Scalar[pl.INT32]):
     conv_states, recurrent_states, key_pool, value_pool, traces, logits = batch_step_inline(input_ids, embedding, final_gamma, lm_head, input_gamma, post_gamma, mlp_gate_weight, mlp_up_weight, mlp_down_weight, delta_qkv_weight, delta_z_weight, delta_a_weight, delta_b_weight, delta_conv_weight, delta_a_log, delta_dt_bias, delta_norm_weight, delta_out_weight, full_q_weight, full_k_weight, full_v_weight, full_q_gamma, full_k_gamma, full_out_weight, cos, sin, mask, token_counts, cache_offsets, conv_states, recurrent_states, key_pool, value_pool, block_tables, traces, logits, active_count)
@@ -1063,6 +1435,10 @@ class CandidateExchange:
 @pl.jit.host
 def prefill_fwd(input_ids: pl.Tensor[[BATCH, ROWS], pl.INT32], embedding: pl.Tensor[[VOCAB, HIDDEN], pl.BF16], final_gamma: pl.Tensor[[1, HIDDEN], pl.FP32], lm_head: pl.Tensor[[VOCAB, HIDDEN], pl.BF16], input_gamma: pl.Tensor[[64, HIDDEN], pl.FP32], post_gamma: pl.Tensor[[64, HIDDEN], pl.FP32], mlp_gate_weight: pl.Tensor[[64 * INTERMEDIATE, HIDDEN], pl.BF16], mlp_up_weight: pl.Tensor[[64 * INTERMEDIATE, HIDDEN], pl.BF16], mlp_down_weight: pl.Tensor[[64 * HIDDEN, INTERMEDIATE], pl.BF16], delta_qkv_weight: pl.Tensor[[48 * QKV, HIDDEN], pl.BF16], delta_z_weight: pl.Tensor[[48 * VALUE_WIDTH, HIDDEN], pl.BF16], delta_a_weight: pl.Tensor[[48 * 128, HIDDEN], pl.BF16], delta_b_weight: pl.Tensor[[48 * 128, HIDDEN], pl.BF16], delta_conv_weight: pl.Tensor[[48 * 4, QKV], pl.BF16], delta_a_log: pl.Tensor[[48, 64], pl.BF16], delta_dt_bias: pl.Tensor[[48, 64], pl.BF16], delta_norm_weight: pl.Tensor[[48, DELTA_DIM], pl.BF16], delta_out_weight: pl.Tensor[[48 * HIDDEN, VALUE_WIDTH], pl.BF16], full_q_weight: pl.Tensor[[16 * FULL_Q_PROJECTION, HIDDEN], pl.BF16], full_k_weight: pl.Tensor[[16 * FULL_KV_WIDTH, HIDDEN], pl.BF16], full_v_weight: pl.Tensor[[16 * FULL_KV_WIDTH, HIDDEN], pl.BF16], full_q_gamma: pl.Tensor[[16, FULL_HEAD_DIM], pl.FP32], full_k_gamma: pl.Tensor[[16, FULL_HEAD_DIM], pl.FP32], full_out_weight: pl.Tensor[[16 * HIDDEN, FULL_Q_WIDTH], pl.BF16], cos: pl.Tensor[[BATCH, ROWS, ROTARY], pl.BF16], sin: pl.Tensor[[BATCH, ROWS, ROTARY], pl.BF16], mask: pl.Tensor[[BATCH, ROWS, CONTEXT], pl.FP32], token_counts: pl.Tensor[[BATCH], pl.INT32], cache_offsets: pl.Tensor[[BATCH], pl.INT32], conv_states: pl.InOut[pl.Tensor[[BATCH, 48, 4, QKV], pl.BF16]], recurrent_states: pl.InOut[pl.Tensor[[BATCH, 48, DELTA_HEADS, DELTA_DIM, DELTA_DIM], pl.FP32]], key_pool: pl.InOut[pl.Tensor[[16, 4, POOL_BLOCKS, BLOCK_SIZE, FULL_HEAD_DIM], pl.BF16]], value_pool: pl.InOut[pl.Tensor[[16, 4, POOL_BLOCKS, BLOCK_SIZE, FULL_HEAD_DIM], pl.BF16]], block_tables: pl.Tensor[[BATCH, CONTEXT // BLOCK_SIZE], pl.INT32], traces: pl.Out[pl.Tensor[[BATCH, 66, ROWS, HIDDEN], pl.BF16]], logits: pl.Out[pl.Tensor[[BATCH, ROWS, VOCAB], pl.BF16]], active_count: pl.Scalar[pl.INT32]):
     rank_prefill_fwd(input_ids, embedding, final_gamma, lm_head, input_gamma, post_gamma, mlp_gate_weight, mlp_up_weight, mlp_down_weight, delta_qkv_weight, delta_z_weight, delta_a_weight, delta_b_weight, delta_conv_weight, delta_a_log, delta_dt_bias, delta_norm_weight, delta_out_weight, full_q_weight, full_k_weight, full_v_weight, full_q_gamma, full_k_gamma, full_out_weight, cos, sin, mask, token_counts, cache_offsets, conv_states, recurrent_states, key_pool, value_pool, block_tables, traces, logits, active_count, device=0)
+
+@pl.jit.host
+def mixed_fwd(input_ids: pl.Tensor[[BATCH, ROWS], pl.INT32], embedding: pl.Tensor[[VOCAB, HIDDEN], pl.BF16], final_gamma: pl.Tensor[[1, HIDDEN], pl.FP32], lm_head: pl.Tensor[[VOCAB, HIDDEN], pl.BF16], input_gamma: pl.Tensor[[64, HIDDEN], pl.FP32], post_gamma: pl.Tensor[[64, HIDDEN], pl.FP32], mlp_gate_weight: pl.Tensor[[64 * INTERMEDIATE, HIDDEN], pl.BF16], mlp_up_weight: pl.Tensor[[64 * INTERMEDIATE, HIDDEN], pl.BF16], mlp_down_weight: pl.Tensor[[64 * HIDDEN, INTERMEDIATE], pl.BF16], delta_qkv_weight: pl.Tensor[[48 * QKV, HIDDEN], pl.BF16], delta_z_weight: pl.Tensor[[48 * VALUE_WIDTH, HIDDEN], pl.BF16], delta_a_weight: pl.Tensor[[48 * 128, HIDDEN], pl.BF16], delta_b_weight: pl.Tensor[[48 * 128, HIDDEN], pl.BF16], delta_conv_weight: pl.Tensor[[48 * 4, QKV], pl.BF16], delta_a_log: pl.Tensor[[48, 64], pl.BF16], delta_dt_bias: pl.Tensor[[48, 64], pl.BF16], delta_norm_weight: pl.Tensor[[48, DELTA_DIM], pl.BF16], delta_out_weight: pl.Tensor[[48 * HIDDEN, VALUE_WIDTH], pl.BF16], full_q_weight: pl.Tensor[[16 * FULL_Q_PROJECTION, HIDDEN], pl.BF16], full_k_weight: pl.Tensor[[16 * FULL_KV_WIDTH, HIDDEN], pl.BF16], full_v_weight: pl.Tensor[[16 * FULL_KV_WIDTH, HIDDEN], pl.BF16], full_q_gamma: pl.Tensor[[16, FULL_HEAD_DIM], pl.FP32], full_k_gamma: pl.Tensor[[16, FULL_HEAD_DIM], pl.FP32], full_out_weight: pl.Tensor[[16 * HIDDEN, FULL_Q_WIDTH], pl.BF16], cos: pl.Tensor[[BATCH, ROWS, ROTARY], pl.BF16], sin: pl.Tensor[[BATCH, ROWS, ROTARY], pl.BF16], mask: pl.Tensor[[BATCH, ROWS, CONTEXT], pl.FP32], token_counts: pl.Tensor[[BATCH], pl.INT32], cache_offsets: pl.Tensor[[BATCH], pl.INT32], conv_states: pl.InOut[pl.Tensor[[BATCH, 48, 4, QKV], pl.BF16]], recurrent_states: pl.InOut[pl.Tensor[[BATCH, 48, DELTA_HEADS, DELTA_DIM, DELTA_DIM], pl.FP32]], key_pool: pl.InOut[pl.Tensor[[16, 4, POOL_BLOCKS, BLOCK_SIZE, FULL_HEAD_DIM], pl.BF16]], value_pool: pl.InOut[pl.Tensor[[16, 4, POOL_BLOCKS, BLOCK_SIZE, FULL_HEAD_DIM], pl.BF16]], block_tables: pl.Tensor[[BATCH, CONTEXT // BLOCK_SIZE], pl.INT32], traces: pl.Out[pl.Tensor[[BATCH, 66, ROWS, HIDDEN], pl.BF16]], logits: pl.Out[pl.Tensor[[BATCH, ROWS, VOCAB], pl.BF16]], packed_offsets: pl.Tensor[[BATCH + 1], pl.INT32], state_slots: pl.Tensor[[BATCH], pl.INT32], active_count: pl.Scalar[pl.INT32]):
+    rank_mixed_fwd(input_ids, embedding, final_gamma, lm_head, input_gamma, post_gamma, mlp_gate_weight, mlp_up_weight, mlp_down_weight, delta_qkv_weight, delta_z_weight, delta_a_weight, delta_b_weight, delta_conv_weight, delta_a_log, delta_dt_bias, delta_norm_weight, delta_out_weight, full_q_weight, full_k_weight, full_v_weight, full_q_gamma, full_k_gamma, full_out_weight, cos, sin, mask, token_counts, cache_offsets, conv_states, recurrent_states, key_pool, value_pool, block_tables, traces, logits, packed_offsets, state_slots, active_count, device=0)
 
 @pl.jit.host
 def decode_fwd(input_ids: pl.Tensor[[BATCH, ROWS], pl.INT32], embedding: pl.Tensor[[VOCAB, HIDDEN], pl.BF16], final_gamma: pl.Tensor[[1, HIDDEN], pl.FP32], lm_head: pl.Tensor[[VOCAB, HIDDEN], pl.BF16], input_gamma: pl.Tensor[[64, HIDDEN], pl.FP32], post_gamma: pl.Tensor[[64, HIDDEN], pl.FP32], mlp_gate_weight: pl.Tensor[[64 * INTERMEDIATE, HIDDEN], pl.BF16], mlp_up_weight: pl.Tensor[[64 * INTERMEDIATE, HIDDEN], pl.BF16], mlp_down_weight: pl.Tensor[[64 * HIDDEN, INTERMEDIATE], pl.BF16], delta_qkv_weight: pl.Tensor[[48 * QKV, HIDDEN], pl.BF16], delta_z_weight: pl.Tensor[[48 * VALUE_WIDTH, HIDDEN], pl.BF16], delta_a_weight: pl.Tensor[[48 * 128, HIDDEN], pl.BF16], delta_b_weight: pl.Tensor[[48 * 128, HIDDEN], pl.BF16], delta_conv_weight: pl.Tensor[[48 * 4, QKV], pl.BF16], delta_a_log: pl.Tensor[[48, 64], pl.BF16], delta_dt_bias: pl.Tensor[[48, 64], pl.BF16], delta_norm_weight: pl.Tensor[[48, DELTA_DIM], pl.BF16], delta_out_weight: pl.Tensor[[48 * HIDDEN, VALUE_WIDTH], pl.BF16], full_q_weight: pl.Tensor[[16 * FULL_Q_PROJECTION, HIDDEN], pl.BF16], full_k_weight: pl.Tensor[[16 * FULL_KV_WIDTH, HIDDEN], pl.BF16], full_v_weight: pl.Tensor[[16 * FULL_KV_WIDTH, HIDDEN], pl.BF16], full_q_gamma: pl.Tensor[[16, FULL_HEAD_DIM], pl.FP32], full_k_gamma: pl.Tensor[[16, FULL_HEAD_DIM], pl.FP32], full_out_weight: pl.Tensor[[16 * HIDDEN, FULL_Q_WIDTH], pl.BF16], cos: pl.Tensor[[BATCH, ROWS, ROTARY], pl.BF16], sin: pl.Tensor[[BATCH, ROWS, ROTARY], pl.BF16], mask: pl.Tensor[[BATCH, ROWS, CONTEXT], pl.FP32], token_counts: pl.Tensor[[BATCH], pl.INT32], cache_offsets: pl.Tensor[[BATCH], pl.INT32], conv_states: pl.InOut[pl.Tensor[[BATCH, 48, 4, QKV], pl.BF16]], recurrent_states: pl.InOut[pl.Tensor[[BATCH, 48, DELTA_HEADS, DELTA_DIM, DELTA_DIM], pl.FP32]], key_pool: pl.InOut[pl.Tensor[[16, 4, POOL_BLOCKS, BLOCK_SIZE, FULL_HEAD_DIM], pl.BF16]], value_pool: pl.InOut[pl.Tensor[[16, 4, POOL_BLOCKS, BLOCK_SIZE, FULL_HEAD_DIM], pl.BF16]], block_tables: pl.Tensor[[BATCH, CONTEXT // BLOCK_SIZE], pl.INT32], traces: pl.Out[pl.Tensor[[BATCH, 66, ROWS, HIDDEN], pl.BF16]], logits: pl.Out[pl.Tensor[[BATCH, ROWS, VOCAB], pl.BF16]], active_count: pl.Scalar[pl.INT32]):
