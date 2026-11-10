@@ -1,0 +1,3075 @@
+{
+  "prefill_small16": {
+    "module": "serving.optimized.kernels.prefill_small16",
+    "entrypoint": "prefill_fwd",
+    "original_CID": 0,
+    "parameter_count": 37,
+    "actual_functions": 57,
+    "params": [
+      {
+        "name": "input_ids__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          16
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "embedding__ssa_v0",
+        "direction": "In",
+        "shape": [
+          248320,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "final_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          5120
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "lm_head__ssa_v0",
+        "direction": "In",
+        "shape": [
+          248320,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "input_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          5120
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "post_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          5120
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "mlp_gate_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          1088,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "mlp_up_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          1088,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "mlp_down_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          320,
+          1088,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_qkv_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          640,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_z_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          384,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_a_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          8,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_b_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          8,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_conv_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          192,
+          10240
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_a_log__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_dt_bias__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_norm_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          128
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_out_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          320,
+          384,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_q_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          768,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_k_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          64,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_v_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          64,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_q_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          256
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "full_k_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          256
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "full_out_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          320,
+          384,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "cos__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          16,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "sin__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          16,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "mask__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          16,
+          2048
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "token_counts__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "cache_offsets__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "conv_states__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          48,
+          4,
+          10240
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "recurrent_states__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          48,
+          48,
+          128,
+          128
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "key_pool__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          16,
+          4,
+          1032,
+          16,
+          256
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "value_pool__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          16,
+          4,
+          1032,
+          16,
+          256
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "block_tables__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          128
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "traces__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          66,
+          16,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "logits__ssa_v0",
+        "direction": "Out",
+        "shape": [
+          8,
+          16,
+          248320
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "active_count__ssa_v0",
+        "direction": "In",
+        "shape": null,
+        "dtype": "int32",
+        "layout": null
+      }
+    ],
+    "distributed_config": {
+      "device_ids": [
+        0
+      ],
+      "num_sub_workers": 0,
+      "runtime": "tensormap_and_ringbuffer",
+      "aicpu_thread_num": 0
+    },
+    "metadata_sha256": "0cd21eacde918264018ce35327a258c279890fa94368f562b6315b16224e4dfe"
+  },
+  "prefill_wide64": {
+    "module": "serving.optimized.kernels.prefill_wide64",
+    "entrypoint": "prefill_fwd",
+    "original_CID": 8,
+    "parameter_count": 37,
+    "actual_functions": 520,
+    "params": [
+      {
+        "name": "input_ids__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          64
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "embedding__ssa_v0",
+        "direction": "In",
+        "shape": [
+          248320,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "final_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          5120
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "lm_head__ssa_v0",
+        "direction": "In",
+        "shape": [
+          248320,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "input_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          5120
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "post_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          5120
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "mlp_gate_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          1088,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "mlp_up_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          1088,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "mlp_down_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          320,
+          1088,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_qkv_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          640,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_z_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          384,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_a_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          8,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_b_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          8,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_conv_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          192,
+          10240
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_a_log__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_dt_bias__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_norm_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          128
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_out_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          320,
+          384,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_q_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          768,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_k_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          64,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_v_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          64,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_q_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          256
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "full_k_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          256
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "full_out_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          320,
+          384,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "cos__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          64,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "sin__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          64,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "mask__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          64,
+          2048
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "token_counts__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "cache_offsets__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "conv_states__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          48,
+          4,
+          10240
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "recurrent_states__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          48,
+          48,
+          128,
+          128
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "key_pool__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          16,
+          4,
+          1032,
+          16,
+          256
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "value_pool__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          16,
+          4,
+          1032,
+          16,
+          256
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "block_tables__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          128
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "traces__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          66,
+          64,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "logits__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          64,
+          248320
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "active_count__ssa_v0",
+        "direction": "In",
+        "shape": null,
+        "dtype": "int32",
+        "layout": null
+      }
+    ],
+    "distributed_config": {
+      "device_ids": [
+        0
+      ],
+      "num_sub_workers": 0,
+      "runtime": "tensormap_and_ringbuffer",
+      "aicpu_thread_num": 0
+    },
+    "metadata_sha256": "77865563413f0dfee0dd88dbd4b5b6f3f45b5ea2f0e3cbd082430e283e538155"
+  },
+  "prefill_chunk512": {
+    "module": "serving.optimized.kernels.prefill_chunk512",
+    "entrypoint": "prefill_fwd",
+    "original_CID": 7,
+    "parameter_count": 37,
+    "actual_functions": 61,
+    "params": [
+      {
+        "name": "input_ids__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          512
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "embedding__ssa_v0",
+        "direction": "In",
+        "shape": [
+          248320,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "final_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          5120
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "lm_head__ssa_v0",
+        "direction": "In",
+        "shape": [
+          248320,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "input_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          5120
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "post_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          5120
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "mlp_gate_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          1088,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "mlp_up_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          1088,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "mlp_down_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          320,
+          1088,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_qkv_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          640,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_z_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          384,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_a_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          8,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_b_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          8,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_conv_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          192,
+          10240
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_a_log__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_dt_bias__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_norm_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          128
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_out_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          320,
+          384,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_q_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          768,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_k_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          64,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_v_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          64,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_q_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          256
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "full_k_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          256
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "full_out_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          320,
+          384,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "cos__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          512,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "sin__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          512,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "mask__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          512,
+          2048
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "token_counts__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "cache_offsets__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "conv_states__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          48,
+          4,
+          10240
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "recurrent_states__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          48,
+          48,
+          128,
+          128
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "key_pool__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          16,
+          4,
+          1032,
+          16,
+          256
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "value_pool__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          16,
+          4,
+          1032,
+          16,
+          256
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "block_tables__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          128
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "traces__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          1,
+          66,
+          512,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "logits__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          1,
+          512,
+          248320
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "active_count__ssa_v0",
+        "direction": "In",
+        "shape": null,
+        "dtype": "int32",
+        "layout": null
+      }
+    ],
+    "distributed_config": {
+      "device_ids": [
+        0
+      ],
+      "num_sub_workers": 0,
+      "runtime": "tensormap_and_ringbuffer",
+      "aicpu_thread_num": 0
+    },
+    "metadata_sha256": "0d00a189fb7f51d247148dfdeae02c343851c58e32f4185a31c2f4d53a49f8db"
+  },
+  "prefill_single128": {
+    "module": "serving.optimized.kernels.prefill_single128",
+    "entrypoint": "prefill_fwd",
+    "original_CID": 13,
+    "parameter_count": 37,
+    "actual_functions": 61,
+    "params": [
+      {
+        "name": "input_ids__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          128
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "embedding__ssa_v0",
+        "direction": "In",
+        "shape": [
+          248320,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "final_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          5120
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "lm_head__ssa_v0",
+        "direction": "In",
+        "shape": [
+          248320,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "input_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          5120
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "post_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          5120
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "mlp_gate_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          1088,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "mlp_up_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          1088,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "mlp_down_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          320,
+          1088,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_qkv_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          640,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_z_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          384,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_a_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          8,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_b_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          8,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_conv_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          192,
+          10240
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_a_log__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_dt_bias__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_norm_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          128
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_out_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          320,
+          384,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_q_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          768,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_k_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          64,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_v_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          64,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_q_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          256
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "full_k_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          256
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "full_out_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          320,
+          384,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "cos__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          128,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "sin__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          128,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "mask__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          128,
+          2048
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "token_counts__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "cache_offsets__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "conv_states__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          48,
+          4,
+          10240
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "recurrent_states__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          48,
+          48,
+          128,
+          128
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "key_pool__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          16,
+          4,
+          1032,
+          16,
+          256
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "value_pool__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          16,
+          4,
+          1032,
+          16,
+          256
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "block_tables__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          128
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "traces__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          1,
+          66,
+          128,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "logits__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          1,
+          128,
+          248320
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "active_count__ssa_v0",
+        "direction": "In",
+        "shape": null,
+        "dtype": "int32",
+        "layout": null
+      }
+    ],
+    "distributed_config": {
+      "device_ids": [
+        0
+      ],
+      "num_sub_workers": 0,
+      "runtime": "tensormap_and_ringbuffer",
+      "aicpu_thread_num": 0
+    },
+    "metadata_sha256": "1792ef87eb03e9aabe1298db5ec0be6fb8409c7fd8815563d5b1251d6bad92f7"
+  },
+  "decode_greedy": {
+    "module": "serving.optimized.kernels.decode_greedy",
+    "entrypoint": "decode_greedy_fwd",
+    "original_CID": 9,
+    "parameter_count": 41,
+    "actual_functions": 60,
+    "params": [
+      {
+        "name": "input_ids__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          8
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "embedding__ssa_v0",
+        "direction": "In",
+        "shape": [
+          248320,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "final_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          5120
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "lm_head__ssa_v0",
+        "direction": "In",
+        "shape": [
+          248320,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "input_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          5120
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "post_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          5120
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "mlp_gate_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          1088,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "mlp_up_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          1088,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "mlp_down_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          320,
+          1088,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_qkv_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          640,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_z_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          384,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_a_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          8,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_b_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          8,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_conv_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          192,
+          10240
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_a_log__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_dt_bias__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_norm_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          128
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_out_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          320,
+          384,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_q_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          768,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_k_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          64,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_v_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          64,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_q_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          256
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "full_k_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          256
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "full_out_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          320,
+          384,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "cos__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          8,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "sin__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          8,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "mask__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          8,
+          2048
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "token_counts__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "cache_offsets__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "conv_states__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          48,
+          4,
+          10240
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "recurrent_states__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          48,
+          48,
+          128,
+          128
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "key_pool__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          16,
+          4,
+          1032,
+          16,
+          256
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "value_pool__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          16,
+          4,
+          1032,
+          16,
+          256
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "block_tables__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          128
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "traces__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          66,
+          8,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "logits__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          8,
+          248320
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "maxima__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          512
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "indices__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          512
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "nan_indices__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          512
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "selected_tokens__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          8
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "active_count__ssa_v0",
+        "direction": "In",
+        "shape": null,
+        "dtype": "int32",
+        "layout": null
+      }
+    ],
+    "distributed_config": {
+      "device_ids": [
+        0
+      ],
+      "num_sub_workers": 0,
+      "runtime": "tensormap_and_ringbuffer",
+      "aicpu_thread_num": 0
+    },
+    "metadata_sha256": "ba11680292bbd83c3b454218df03027cd12b0790045e88ba162eb1675a16cc47"
+  },
+  "mixed_ffn": {
+    "module": "serving.optimized.kernels.mixed_ffn",
+    "entrypoint": "mixed334_fwd",
+    "original_CID": 12,
+    "parameter_count": 50,
+    "actual_functions": 119,
+    "params": [
+      {
+        "name": "embedding__ssa_v0",
+        "direction": "In",
+        "shape": [
+          248320,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "final_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          5120
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "lm_head__ssa_v0",
+        "direction": "In",
+        "shape": [
+          248320,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "input_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          5120
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "post_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          5120
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "mlp_gate_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          1088,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "mlp_up_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          1088,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "mlp_down_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          64,
+          320,
+          1088,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_qkv_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          640,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_z_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          384,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_a_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          8,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_b_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          8,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "delta_conv_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          192,
+          10240
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_a_log__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_dt_bias__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_norm_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          128
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "delta_out_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          48,
+          320,
+          384,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_q_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          768,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_k_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          64,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_v_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          64,
+          320,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "full_q_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          256
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "full_k_gamma__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          256
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "full_out_weight__ssa_v0",
+        "direction": "In",
+        "shape": [
+          16,
+          320,
+          384,
+          16,
+          16
+        ],
+        "dtype": "bfloat16",
+        "layout": "NZ"
+      },
+      {
+        "name": "conv_states__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          48,
+          4,
+          10240
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "recurrent_states__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          48,
+          48,
+          128,
+          128
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "key_pool__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          16,
+          4,
+          1032,
+          16,
+          256
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "value_pool__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          16,
+          4,
+          1032,
+          16,
+          256
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "pm_input_ids__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          128
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "pm_cos__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          128,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "pm_sin__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          128,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "pm_mask__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          128,
+          2048
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "pm_token_counts__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "pm_cache_offsets__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "pm_block_tables__ssa_v0",
+        "direction": "In",
+        "shape": [
+          1,
+          128
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "pm_traces__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          1,
+          66,
+          128,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "pm_logits__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          1,
+          128,
+          248320
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "dm_input_ids__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          8
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "dm_cos__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          8,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "dm_sin__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          8,
+          64
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "dm_mask__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          8,
+          2048
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "dm_token_counts__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "dm_cache_offsets__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "dm_block_tables__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          128
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "dm_traces__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          66,
+          8,
+          5120
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "dm_logits__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          8,
+          248320
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "dm_maxima__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          512
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "dm_indices__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          512
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "dm_nan_indices__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          512
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "dm_selected_tokens__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          8
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "active_count__ssa_v0",
+        "direction": "In",
+        "shape": null,
+        "dtype": "int32",
+        "layout": null
+      }
+    ],
+    "distributed_config": {
+      "device_ids": [
+        0
+      ],
+      "num_sub_workers": 0,
+      "runtime": "tensormap_and_ringbuffer",
+      "aicpu_thread_num": 0
+    },
+    "metadata_sha256": "54881464d8b78438b7f4dbf47a86e54b9659bf184551352a2405c35fe6c43af4"
+  },
+  "compact_local": {
+    "module": "serving.optimized.kernels.state_compact",
+    "entrypoint": "compact_states_local_tile_fwd",
+    "original_CID": 10,
+    "parameter_count": 4,
+    "actual_functions": 2,
+    "params": [
+      {
+        "name": "conv__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          983040
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "recurrent__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          37748736
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "plan__ssa_v0",
+        "direction": "In",
+        "shape": [
+          12,
+          3
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "step_count__ssa_v0",
+        "direction": "In",
+        "shape": null,
+        "dtype": "int32",
+        "layout": null
+      }
+    ],
+    "distributed_config": {
+      "device_ids": [
+        0
+      ],
+      "num_sub_workers": 0,
+      "runtime": "tensormap_and_ringbuffer",
+      "aicpu_thread_num": 0
+    },
+    "metadata_sha256": "afbe8b333a3db7b86141d686253898c2b140306c48145ae7e3e2dcaed09e0d9a"
+  },
+  "zero_state": {
+    "module": "serving.optimized.state_ops",
+    "entrypoint": "zero_state_fwd",
+    "original_CID": 2,
+    "parameter_count": 3,
+    "actual_functions": 2,
+    "params": [
+      {
+        "name": "conv__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          48,
+          4,
+          10240
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "recurrent__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          48,
+          48,
+          128,
+          128
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "slot__ssa_v0",
+        "direction": "In",
+        "shape": null,
+        "dtype": "index",
+        "layout": null
+      }
+    ],
+    "distributed_config": {
+      "device_ids": [
+        0
+      ],
+      "num_sub_workers": 0,
+      "runtime": "tensormap_and_ringbuffer",
+      "aicpu_thread_num": 0
+    },
+    "metadata_sha256": "4038e4bde5a9573a2128536bc2b4c2856a911ea2066d222502c0e8c0f2ca59a0"
+  },
+  "compact_scratch": {
+    "module": "serving.optimized.state_ops",
+    "entrypoint": "compact_states_fwd",
+    "original_CID": 3,
+    "parameter_count": 7,
+    "actual_functions": 4,
+    "params": [
+      {
+        "name": "conv__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          48,
+          4,
+          10240
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "recurrent__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          48,
+          48,
+          128,
+          128
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "scratch_conv__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          48,
+          4,
+          10240
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "scratch_recurrent__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          48,
+          48,
+          128,
+          128
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "sources__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "destinations__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "move_count__ssa_v0",
+        "direction": "In",
+        "shape": null,
+        "dtype": "int32",
+        "layout": null
+      }
+    ],
+    "distributed_config": {
+      "device_ids": [
+        0
+      ],
+      "num_sub_workers": 0,
+      "runtime": "tensormap_and_ringbuffer",
+      "aicpu_thread_num": 0
+    },
+    "metadata_sha256": "059f555e253bd99e87a19879b3c6eaf996724553f159df605e0875aca78553d8"
+  },
+  "greedy": {
+    "module": "serving.optimized.sampling",
+    "entrypoint": "greedy_fwd",
+    "original_CID": 4,
+    "parameter_count": 7,
+    "actual_functions": 2,
+    "params": [
+      {
+        "name": "logits__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8,
+          8,
+          248320
+        ],
+        "dtype": "bfloat16",
+        "layout": "ND"
+      },
+      {
+        "name": "counts__ssa_v0",
+        "direction": "In",
+        "shape": [
+          8
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "maxima__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          512
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "indices__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          512
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "nan_indices__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          512
+        ],
+        "dtype": "fp32",
+        "layout": "ND"
+      },
+      {
+        "name": "tokens__ssa_v0",
+        "direction": "InOut",
+        "shape": [
+          8,
+          8
+        ],
+        "dtype": "int32",
+        "layout": "ND"
+      },
+      {
+        "name": "active__ssa_v0",
+        "direction": "In",
+        "shape": null,
+        "dtype": "int32",
+        "layout": null
+      }
+    ],
+    "distributed_config": {
+      "device_ids": [
+        0
+      ],
+      "num_sub_workers": 0,
+      "runtime": "tensormap_and_ringbuffer",
+      "aicpu_thread_num": 0
+    },
+    "metadata_sha256": "56632bebf12f99738853e11502b6f38224daaf345244288b70025467ce551b7a"
+  }
+}

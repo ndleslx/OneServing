@@ -9,6 +9,7 @@ from pathlib import Path
 from transformers import AutoTokenizer
 
 from .runtime import ModelRunner
+from .model import BATCH
 from .schedule import RequestState, Scheduler
 
 
@@ -28,8 +29,8 @@ def percentile(values: list[float], fraction: float) -> float | None:
 class InferenceEngine:
     def __init__(self, model_root: Path, device_id: int,
                  max_active: int = 2, prefix_cache: bool = True):
-        if not 1 <= max_active <= 2:
-            raise ValueError("This runtime has validated at most two active device slots")
+        if not 1 <= max_active <= BATCH:
+            raise ValueError(f"max_active must be between 1 and the compiled batch capacity ({BATCH})")
         self.model_root = model_root
         self.device_id = device_id
         self.tokenizer = AutoTokenizer.from_pretrained(
