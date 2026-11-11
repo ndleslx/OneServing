@@ -1,0 +1,276 @@
+{
+  "schema": "oneserving-optimized-history-v1",
+  "scope": "Selected fields of historical source-bound receipts, not new standalone-service acceptance.",
+  "source_audit_receipt_sha256": "5bb4fce07b0588542c7ee982f9475424fa7d9898c0c1c943c61f7566b8daa090",
+  "new_NPU_calls": 0,
+  "migrated_standalone_NPU_accepted": false,
+  "migrated_standalone_HTTP_accepted": false,
+  "receipts": {
+    "original44_plus3": {
+      "receipt": "de59-final44-plus3-Main-acceptance.json",
+      "sha256": "ab1d5668b89ad66d01c586b8f5bf340a73b8275e2fac345e6bde50182220cbfd",
+      "fields": {
+        "outcome": "PASS_MAIN_SOURCE_BOUND_ORIGINAL44_PLUS3_NUMERIC_RAW_AND_REAL_HOST_CLEANUP",
+        "source_sha256": "de59b6adac3342e992723bab8d314b98f31a048160477216514f77f2066f5ac6",
+        "original_numeric_cases": 44,
+        "numeric_native_calls": 1980,
+        "original_diagnostic_calls": 195,
+        "total_original_calls": 2175,
+        "actual_programs": 8,
+        "actual_functions": 832,
+        "full44_plus3_accepted": true,
+        "original_numerical_contract_met": true,
+        "all66_hidden_full_consumed_vocab_unselected_sentinel_full8state_readonly_finite": true,
+        "serving_accepted": false,
+        "HTTP_TTFT_measured": false,
+        "vLLM_parity_achieved": false,
+        "release_accepted": false,
+        "promotion_allowed": false
+      }
+    },
+    "rotation185187": {
+      "receipt": "rotation-general185187-full18-Main-aggregate-v1.json",
+      "sha256": "f4476a91a1921aab47aaa56ea6657cdbad44a404959ce4613ca40bdd68bb8c4d",
+      "fields": {
+        "outcome": "MAIN_AGGREGATED_ROTATION_COMPOSITION_ALL18_SHARED_HTTP_CELLS_ALL_GATES_PASS",
+        "measured_requests": 1728,
+        "warmup_requests_excluded": 624,
+        "initial_requests_excluded": 72,
+        "total_service_requests": 2424,
+        "actual_native_calls": 492676,
+        "all18_shared_gates_pass": true,
+        "reference": "same original long-prefill/decode rotation",
+        "candidate": "rotation plus accepted fused decode,GDN,cheap host preparation and preserving local compaction",
+        "statistics": "Means of two official per-leg metric values. No pooled or recomputed quantiles. All18 cells frozen before execution; all failures would be retained.",
+        "shared_screen_only": true,
+        "formal200_or_fresh_matched_vLLM_or_model_goal_accepted": false,
+        "promotion_allowed": false
+      }
+    },
+    "integrated353": {
+      "receipt": "integrated353-Main-closeout-v1.json",
+      "sha256": "ea43b3224a5e4ee1dbea0f59eb958d042b003c768b4dec51f61261ad18a9eecc",
+      "fields": {
+        "Main_outcome": "MAIN_CLOSED353_ACTUAL348_320_FULL1396_ORIGINAL648_PLUS28_ALL53_HOST",
+        "actual_native_calls": 1396,
+        "actual_programs": 14,
+        "actual_functions": 1658,
+        "original_numeric_cases": 10,
+        "original_native_calls": 648,
+        "mixed_numeric_cases": 28,
+        "all14_full8_physicalKV_all66_vocab_sampler_all35_host_fields_exact": true,
+        "all53_Host_fields_original35_plus18_exact": true,
+        "every_dispatch_host_input_readonly": true,
+        "five_token_continuations_exact": true,
+        "Main_accepted_complete_integrated_numeric": true,
+        "actual_scheduler_admission_cancel_EOS_reuse_and_HTTP_accepted": false,
+        "original_model44_plus3_full18_final200_and_standalone_release_still_required": true,
+        "model_or_HTTP_performance_accepted": false,
+        "promotion_allowed": false
+      }
+    },
+    "ffn373": {
+      "receipt": "ffn373-Main-closeout-v1.json",
+      "sha256": "72ced07b0d2cb1edcaad2ada90b9441af559da7ae0eb2eef95646687752095bb",
+      "fields": {
+        "Main_outcome": "MAIN_CLOSED373_MIXED371_FULL1396_ORIGINAL648_PLUS28_ALL53_HOST",
+        "actual_native_calls": 1396,
+        "actual_programs": 14,
+        "actual_functions": 1656,
+        "original_numeric_cases": 10,
+        "original_native_calls": 648,
+        "mixed_numeric_cases": 28,
+        "all14_full8_physicalKV_all66_vocab_sampler_all35_host_fields_exact": true,
+        "all53_Host_fields_original35_plus18_exact": true,
+        "every_dispatch_host_input_readonly": true,
+        "five_token_continuations_exact": true,
+        "Main_accepted_complete_integrated_numeric": true,
+        "actual_scheduler_admission_cancel_EOS_reuse_and_HTTP_accepted": false,
+        "original_model44_plus3_full18_final200_and_standalone_release_still_required": true,
+        "model_or_HTTP_performance_accepted": false,
+        "promotion_allowed": false
+      }
+    },
+    "ffn381": {
+      "receipt": "ffn381-Main-closeout-v1.json",
+      "sha256": "d75d71eaa8b756422fc841bba2a422c424fbdd6dfbea96953144f7c61af6c444",
+      "fields": {
+        "Main_outcome": "MAIN_CLOSED381_ALL294_SIX_FULL_NUMERIC_AND72_RESTORED_LEGS_ALL_ORIGINAL_GATES_RETAINED",
+        "actual_native_calls": 294,
+        "actual_programs": 15,
+        "actual_functions": 1777,
+        "original_full373_native_calls_reused": 1396,
+        "new_original648_calls": 0,
+        "new_full28_replay_calls": 0,
+        "mixed_numeric_cases": 6,
+        "timing_legs": 72,
+        "full14_full53_all66_physicalKV_fullvocab_exact": true,
+        "five_token_continuations_exact": true,
+        "all_six_diagnostic_performance_gates_passed": true,
+        "Main_accepted_complete_numeric_and_equal_work_diagnostic": true,
+        "whole_mixed_diagnostic_performance_accepted": true,
+        "model_or_HTTP_performance_accepted": false,
+        "original_model44_plus3_full18_final200_still_required": true,
+        "promotion_allowed": false
+      }
+    },
+    "old323_service_failure": {
+      "receipt": "service377-v4-ABI-failure-Main-closeout-v1.json",
+      "sha256": "e555d5404e31d481e293e613b032fc3d8b3b9625fbf797cd40e6df5b1de4eabc",
+      "fields": {
+        "Main_outcome": "MAIN_CLOSED_SERVICE377_V4_COMPLETE49_ABI_FAILURE_ZERO_ACCEPTANCE",
+        "failure_case": "budget1_noop",
+        "actual_failure": "AssertionError('Complete49 ABI logical inputs differ from original264 replay')",
+        "saved_full_call_entries": 242,
+        "observed_complete_native_device_spans": 242,
+        "actual_service_lifecycle_accepted": false,
+        "accepted_native_calls": 0,
+        "no_partial_prefix_adopted": true,
+        "performance_accepted": false,
+        "promotion_allowed": false
+      }
+    },
+    "corrected397_primitive": {
+      "receipt": "feedback398v2-full62-Main-closeout-v1.json",
+      "sha256": "08fd506c99ccd2fb988f978f598b6b4fc5f22864f6e85741905bb084e6fa0bc1",
+      "fields": {
+        "Main_outcome": "MAIN_CLOSED_FEEDBACK398V2_FULL62_OLD31_NEGATIVE_NEW31_FULL_BYTES_PASS",
+        "actual_native_calls": 62,
+        "original323_negative_frames": 31,
+        "corrected397_full_byte_exact_frames": 31,
+        "all320_output_and608_readonly_bytes_per_call_verified": true,
+        "same_role_actual_previous_outputs_reused": true,
+        "Main_accepted_complete_component_numeric_diagnostic": true,
+        "full_model_or_service_lifecycle_accepted": false,
+        "HTTP_performance_accepted": false,
+        "candidate_selected": false,
+        "promotion_allowed": false
+      }
+    },
+    "rotation180": {
+      "receipt": "integration180-Main-closeout-v1.json",
+      "sha256": "e83503d854895245a31eabdf4e3dc63cb529353ac161a75e3e84ecfae22b1f09",
+      "fields": {
+        "outcome": "MAIN_ACCEPTED_INTEGRATION180_FULL_NUMERIC648_ONLY",
+        "actual_native_calls": 648,
+        "numeric_cases": 10,
+        "full_state_KV_hidden_vocab_sampler_and5tokens_exact": true,
+        "all_dispatch_host_inputs_readonly": true,
+        "full_expected_native_source_identity_verified": true,
+        "original44_accepted": false,
+        "model_performance_accepted": false,
+        "HTTP_performance_accepted": false,
+        "original_rotation_and_all_unscheduled_resident_preservation_verified": true,
+        "unscheduled_full_state_and_KV_metadata_checks": 682,
+        "promotion_allowed": false
+      }
+    },
+    "gdn396_rejected": {
+      "receipt": "gdn396-full1394-Main-closeout-v1.json",
+      "sha256": "1f2fa322d67b9047dc3697adb6da97603da466606f9c60f4744883c6b768c490",
+      "fields": {
+        "Main_outcome": "MAIN_CLOSED_GDN396_COMPLETE1394_NUMERIC_PASS_PERFORMANCE_REJECTED_ALL12_GROUPS",
+        "actual_native_calls": 1394,
+        "numeric_cases": 97,
+        "ABBA_groups": 12,
+        "performance_groups_passed": 0,
+        "candidate_latency_increase_percent_range": [
+          3.362926268971478,
+          6.557010010958808
+        ],
+        "Main_accepted_complete_component_numeric_and_diagnostic": true,
+        "component_performance_accepted": false,
+        "candidate_selected": false,
+        "model_or_HTTP_performance_accepted": false,
+        "promotion_allowed": false
+      }
+    }
+  },
+  "ffn381_whole_mixed_diagnostic_cells": [
+    {
+      "case": "partial128-prefix0-decode512-active2",
+      "mean_native_ms": {
+        "reference": 138.7136795,
+        "fused": 127.351785
+      },
+      "repeat_drift": {
+        "reference": 0.001991698702050071,
+        "fused": 0.0009401222936722409
+      },
+      "latency_gain": 0.08190896918713775,
+      "actual_input_tokens": 129,
+      "diagnostic_3percent_gate_pass": true
+    },
+    {
+      "case": "partial128-prefix0-decode512-active4",
+      "mean_native_ms": {
+        "reference": 138.00919975,
+        "fused": 128.244235
+      },
+      "repeat_drift": {
+        "reference": 0.0023176042993482415,
+        "fused": 0.003131507785425036
+      },
+      "latency_gain": 0.07075589719880249,
+      "actual_input_tokens": 131,
+      "diagnostic_3percent_gate_pass": true
+    },
+    {
+      "case": "partial128-prefix0-decode512-active8",
+      "mean_native_ms": {
+        "reference": 139.61000475,
+        "fused": 130.8875295
+      },
+      "repeat_drift": {
+        "reference": 6.152685302085459e-05,
+        "fused": 0.00022754947186665042
+      },
+      "latency_gain": 0.06247743681134721,
+      "actual_input_tokens": 135,
+      "diagnostic_3percent_gate_pass": true
+    },
+    {
+      "case": "complete128-prefix512-decode1024-active2",
+      "mean_native_ms": {
+        "reference": 141.14050500000002,
+        "fused": 130.01403975
+      },
+      "repeat_drift": {
+        "reference": 0.00237243540052412,
+        "fused": 0.0025773429299826844
+      },
+      "latency_gain": 0.07883254527111139,
+      "actual_input_tokens": 129,
+      "diagnostic_3percent_gate_pass": true
+    },
+    {
+      "case": "complete128-prefix512-decode1024-active4",
+      "mean_native_ms": {
+        "reference": 141.12921975,
+        "fused": 130.383795
+      },
+      "repeat_drift": {
+        "reference": 0.009244601466219304,
+        "fused": 0.0017807162030281098
+      },
+      "latency_gain": 0.0761389085055153,
+      "actual_input_tokens": 131,
+      "diagnostic_3percent_gate_pass": true
+    },
+    {
+      "case": "complete128-prefix512-decode1024-active8",
+      "mean_native_ms": {
+        "reference": 143.10422475000001,
+        "fused": 133.829295
+      },
+      "repeat_drift": {
+        "reference": 0.007404244866223042,
+        "fused": 0.006086570369107314
+      },
+      "latency_gain": 0.06481241043863739,
+      "actual_input_tokens": 135,
+      "diagnostic_3percent_gate_pass": true
+    }
+  ],
+  "ffn381_metric_scope": "Equal-work whole mixed Native step only; not HTTP TTFT/TPOT/throughput."
+}

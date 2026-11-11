@@ -1,0 +1,368 @@
+{
+  "schema": "oneserving-optimized-source-export-v1",
+  "scope": "Kernel source export qualification before final service assembly; relative module relocation only.",
+  "new_NPU_calls": 0,
+  "migrated_standalone_numeric_accepted": false,
+  "migrated_standalone_HTTP_accepted": false,
+  "source_receipts": {
+    "EXPORT_READY.json": "a20e814003ed6a861aeeacf56f4e7ecee74da6b1c4dfac7424c216c9de484f06",
+    "source-provenance.json": "83d63e6f87184bf56bd7db42da9ce39083998ae65db3555c28ae8f2d7fba9137",
+    "import-compile-result.json": "030481cb382edd36c622fea2f24b2e52c81328ab1aa6d5c3957ae22bf5d6948e",
+    "generated-PTO-alpha-equivalence.json": "a78a119ec8f0aa72fdae31defd19fa26cf076d395ea39a98af04520245411fa8"
+  },
+  "source_files": {
+    "serving/optimized/model.py": {
+      "historical_source_filename": "model.py",
+      "original_sha256": "68794af421e891737df28672122c478af83a9e6367f6ace727e38f3d956c2f55",
+      "exported_sha256": "68794af421e891737df28672122c478af83a9e6367f6ace727e38f3d956c2f55",
+      "inverse_byte_exact": true,
+      "normalized_AST_exact": true,
+      "edits": []
+    },
+    "serving/optimized/sampling.py": {
+      "historical_source_filename": "sampling.py",
+      "original_sha256": "e90835f8a19a9bd882da0bab9b18351279da86868894f886c239be2dde081e53",
+      "exported_sha256": "e90835f8a19a9bd882da0bab9b18351279da86868894f886c239be2dde081e53",
+      "inverse_byte_exact": true,
+      "normalized_AST_exact": true,
+      "edits": []
+    },
+    "serving/optimized/weight.py": {
+      "historical_source_filename": "weight.py",
+      "original_sha256": "7027881689414ac83f88f42e97011b492a6cd2f5088146bb818f4d769869e8b9",
+      "exported_sha256": "7027881689414ac83f88f42e97011b492a6cd2f5088146bb818f4d769869e8b9",
+      "inverse_byte_exact": true,
+      "normalized_AST_exact": true,
+      "edits": []
+    },
+    "serving/optimized/state_ops.py": {
+      "historical_source_filename": "state_ops.py",
+      "original_sha256": "b41582144cb3fd84c6daf8ea6eb8073d3636a87557e519ccba1affe210404c81",
+      "exported_sha256": "b41582144cb3fd84c6daf8ea6eb8073d3636a87557e519ccba1affe210404c81",
+      "inverse_byte_exact": true,
+      "normalized_AST_exact": true,
+      "edits": []
+    },
+    "serving/optimized/kernels/prefill_small16.py": {
+      "historical_source_filename": "model_prefill.py",
+      "original_sha256": "6cabe99cfb5a0fa48efa172f2af7b8ef0d0abc59190fe538b4d674fa74180649",
+      "exported_sha256": "4116587217fb695bdea6519f6a9b3dfa009eb672414a5fb8a0f8ffb4321bb21f",
+      "inverse_byte_exact": true,
+      "normalized_AST_exact": true,
+      "edits": [
+        {
+          "old": "from .model import ",
+          "new": "from ..model import ",
+          "count": 1
+        }
+      ]
+    },
+    "serving/optimized/kernels/prefill_wide64.py": {
+      "historical_source_filename": "model_prefill_wide.py",
+      "original_sha256": "a1663ea2eb0be9953214eaa62bcba54e507e7db37918828808323b4a3c32b682",
+      "exported_sha256": "337fb844ad4837ec6223e5ee5e7866e515c591fed37bd14dfdd01afc38597c2d",
+      "inverse_byte_exact": true,
+      "normalized_AST_exact": true,
+      "edits": [
+        {
+          "old": "from .model import ",
+          "new": "from ..model import ",
+          "count": 1
+        }
+      ]
+    },
+    "serving/optimized/kernels/prefill_chunk512.py": {
+      "historical_source_filename": "model_prefill_c1_chunk.py",
+      "original_sha256": "de59b6adac3342e992723bab8d314b98f31a048160477216514f77f2066f5ac6",
+      "exported_sha256": "b80d4e7afab2cf44a15a35e0508d0d6fbb7b0320360992f1322f6821b9b00e2f",
+      "inverse_byte_exact": true,
+      "normalized_AST_exact": true,
+      "edits": [
+        {
+          "old": "from .model import ",
+          "new": "from ..model import ",
+          "count": 1
+        }
+      ]
+    },
+    "serving/optimized/kernels/prefill_single128.py": {
+      "historical_source_filename": "model_prefill_single128.py",
+      "original_sha256": "5782626de48ec8b37f2243c94718c03ee034e283c18db07b67a30c6fc1390cfd",
+      "exported_sha256": "3460eef0c0ab984a8a2d6d15d5893c79fff6231d75d30b8194aa97728c9e3484",
+      "inverse_byte_exact": true,
+      "normalized_AST_exact": true,
+      "edits": [
+        {
+          "old": "from .model import ",
+          "new": "from ..model import ",
+          "count": 1
+        }
+      ]
+    },
+    "serving/optimized/kernels/decode_greedy.py": {
+      "historical_source_filename": "model_decode_greedy.py",
+      "original_sha256": "2ecec09227707d2c428ba02f79135e0165c04d4b6c12469134b10f74aabf1edf",
+      "exported_sha256": "734ec85095a0e7f7c22254136ade722954d402690ceef2b522c32c5a8790cf4f",
+      "inverse_byte_exact": true,
+      "normalized_AST_exact": true,
+      "edits": [
+        {
+          "old": "from .sampling import ",
+          "new": "from ..sampling import ",
+          "count": 1
+        }
+      ]
+    },
+    "serving/optimized/kernels/mixed_ffn.py": {
+      "historical_source_filename": "model_mixed371.py",
+      "original_sha256": "3cab496b795f0e65bee9ed41bc073d95cf0f19ce071c03a1dea8e0e19ee25610",
+      "exported_sha256": "dbc4e0d5d1551d0aaf5483c30787faf282764e7a7d4650cf135a071532876ae3",
+      "inverse_byte_exact": true,
+      "normalized_AST_exact": true,
+      "edits": [
+        {
+          "old": "from serving.model import ",
+          "new": "from ..model import ",
+          "count": 1
+        },
+        {
+          "old": "from .sampling import ",
+          "new": "from ..sampling import ",
+          "count": 1
+        }
+      ]
+    },
+    "serving/optimized/kernels/state_compact.py": {
+      "historical_source_filename": "state_compact_local_tile.py",
+      "original_sha256": "07d46f3cf16d20a0cc3573a0e3cd4a13ad8c7615410b7c7b194ec06e1b3663be",
+      "exported_sha256": "07d46f3cf16d20a0cc3573a0e3cd4a13ad8c7615410b7c7b194ec06e1b3663be",
+      "inverse_byte_exact": true,
+      "normalized_AST_exact": true,
+      "edits": []
+    },
+    "serving/optimized/kernels/copy_plan.py": {
+      "historical_source_filename": "copy_plan.py",
+      "original_sha256": "7b6aa20208d094ac04c42d654146729ca55fade05116c48f0aaafae71a31204b",
+      "exported_sha256": "7b6aa20208d094ac04c42d654146729ca55fade05116c48f0aaafae71a31204b",
+      "inverse_byte_exact": true,
+      "normalized_AST_exact": true,
+      "edits": []
+    }
+  },
+  "graphs": {
+    "prefill_small16": {
+      "original_CID": 0,
+      "entrypoint": "prefill_fwd",
+      "parameter_count": 37,
+      "actual_functions": 57,
+      "module": "serving.optimized.kernels.prefill_small16",
+      "original_metadata_sha256": "0cd21eacde918264018ce35327a258c279890fa94368f562b6315b16224e4dfe",
+      "PTO_files": 41,
+      "PTO_operations_layouts_rounding_loops_exact": true
+    },
+    "prefill_wide64": {
+      "original_CID": 8,
+      "entrypoint": "prefill_fwd",
+      "parameter_count": 37,
+      "actual_functions": 520,
+      "module": "serving.optimized.kernels.prefill_wide64",
+      "original_metadata_sha256": "77865563413f0dfee0dd88dbd4b5b6f3f45b5ea2f0e3cbd082430e283e538155",
+      "PTO_files": 312,
+      "PTO_operations_layouts_rounding_loops_exact": true
+    },
+    "prefill_chunk512": {
+      "original_CID": 7,
+      "entrypoint": "prefill_fwd",
+      "parameter_count": 37,
+      "actual_functions": 61,
+      "module": "serving.optimized.kernels.prefill_chunk512",
+      "original_metadata_sha256": "0d00a189fb7f51d247148dfdeae02c343851c58e32f4185a31c2f4d53a49f8db",
+      "PTO_files": 43,
+      "PTO_operations_layouts_rounding_loops_exact": true
+    },
+    "prefill_single128": {
+      "original_CID": 13,
+      "entrypoint": "prefill_fwd",
+      "parameter_count": 37,
+      "actual_functions": 61,
+      "module": "serving.optimized.kernels.prefill_single128",
+      "original_metadata_sha256": "1792ef87eb03e9aabe1298db5ec0be6fb8409c7fd8815563d5b1251d6bad92f7",
+      "PTO_files": 43,
+      "PTO_operations_layouts_rounding_loops_exact": true
+    },
+    "decode_greedy": {
+      "original_CID": 9,
+      "entrypoint": "decode_greedy_fwd",
+      "parameter_count": 41,
+      "actual_functions": 60,
+      "module": "serving.optimized.kernels.decode_greedy",
+      "original_metadata_sha256": "ba11680292bbd83c3b454218df03027cd12b0790045e88ba162eb1675a16cc47",
+      "PTO_files": 42,
+      "PTO_operations_layouts_rounding_loops_exact": true
+    },
+    "mixed_ffn": {
+      "original_CID": 12,
+      "entrypoint": "mixed334_fwd",
+      "parameter_count": 50,
+      "actual_functions": 119,
+      "module": "serving.optimized.kernels.mixed_ffn",
+      "original_metadata_sha256": "54881464d8b78438b7f4dbf47a86e54b9659bf184551352a2405c35fe6c43af4",
+      "PTO_files": 84,
+      "PTO_operations_layouts_rounding_loops_exact": true
+    },
+    "compact_local": {
+      "original_CID": 10,
+      "entrypoint": "compact_states_local_tile_fwd",
+      "parameter_count": 4,
+      "actual_functions": 2,
+      "module": "serving.optimized.kernels.state_compact",
+      "original_metadata_sha256": "afbe8b333a3db7b86141d686253898c2b140306c48145ae7e3e2dcaed09e0d9a",
+      "PTO_files": 2,
+      "PTO_operations_layouts_rounding_loops_exact": true
+    },
+    "zero_state": {
+      "original_CID": 2,
+      "entrypoint": "zero_state_fwd",
+      "parameter_count": 3,
+      "actual_functions": 2,
+      "module": "serving.optimized.state_ops",
+      "original_metadata_sha256": "4038e4bde5a9573a2128536bc2b4c2856a911ea2066d222502c0e8c0f2ca59a0",
+      "PTO_files": 2,
+      "PTO_operations_layouts_rounding_loops_exact": true
+    },
+    "compact_scratch": {
+      "original_CID": 3,
+      "entrypoint": "compact_states_fwd",
+      "parameter_count": 7,
+      "actual_functions": 4,
+      "module": "serving.optimized.state_ops",
+      "original_metadata_sha256": "059f555e253bd99e87a19879b3c6eaf996724553f159df605e0875aca78553d8",
+      "PTO_files": 4,
+      "PTO_operations_layouts_rounding_loops_exact": true
+    },
+    "greedy": {
+      "original_CID": 4,
+      "entrypoint": "greedy_fwd",
+      "parameter_count": 7,
+      "actual_functions": 2,
+      "module": "serving.optimized.sampling",
+      "original_metadata_sha256": "56632bebf12f99738853e11502b6f38224daaf345244288b70025467ce551b7a",
+      "PTO_files": 2,
+      "PTO_operations_layouts_rounding_loops_exact": true
+    }
+  },
+  "cpu_compile": {
+    "outcome": "PASS_ALL10_MOVED_SOURCE_IMPORT_FRESH_CPU_COMPILE_COMPLETE_METADATA_AND_FUNCTION_COUNTS",
+    "claimed_new_device_runs": 0,
+    "DeviceWorker_constructions": 0,
+    "fresh_CPU_compiles": [
+      {
+        "name": "prefill_small16",
+        "metadata_byte_exact": true,
+        "complete_metadata_structural_exact": true,
+        "actual_functions": 57,
+        "elapsed_seconds": 0.25935348216444254
+      },
+      {
+        "name": "prefill_wide64",
+        "metadata_byte_exact": true,
+        "complete_metadata_structural_exact": true,
+        "actual_functions": 520,
+        "elapsed_seconds": 26.718802761286497
+      },
+      {
+        "name": "prefill_chunk512",
+        "metadata_byte_exact": true,
+        "complete_metadata_structural_exact": true,
+        "actual_functions": 61,
+        "elapsed_seconds": 5.215832518879324
+      },
+      {
+        "name": "prefill_single128",
+        "metadata_byte_exact": true,
+        "complete_metadata_structural_exact": true,
+        "actual_functions": 61,
+        "elapsed_seconds": 4.570610525086522
+      },
+      {
+        "name": "decode_greedy",
+        "metadata_byte_exact": true,
+        "complete_metadata_structural_exact": true,
+        "actual_functions": 60,
+        "elapsed_seconds": 4.265326865948737
+      },
+      {
+        "name": "mixed_ffn",
+        "metadata_byte_exact": true,
+        "complete_metadata_structural_exact": true,
+        "actual_functions": 119,
+        "elapsed_seconds": 8.81575261708349
+      },
+      {
+        "name": "compact_local",
+        "metadata_byte_exact": true,
+        "complete_metadata_structural_exact": true,
+        "actual_functions": 2,
+        "elapsed_seconds": 0.39635799499228597
+      },
+      {
+        "name": "zero_state",
+        "metadata_byte_exact": true,
+        "complete_metadata_structural_exact": true,
+        "actual_functions": 2,
+        "elapsed_seconds": 0.3301112619228661
+      },
+      {
+        "name": "compact_scratch",
+        "metadata_byte_exact": true,
+        "complete_metadata_structural_exact": true,
+        "actual_functions": 4,
+        "elapsed_seconds": 0.4280561413615942
+      },
+      {
+        "name": "greedy",
+        "metadata_byte_exact": true,
+        "complete_metadata_structural_exact": true,
+        "actual_functions": 2,
+        "elapsed_seconds": 0.7155126598663628
+      }
+    ],
+    "migrated_device_numeric_accepted": false
+  },
+  "PTO_equivalence": {
+    "outcome": "PASS_ALL_GENERATED_PTO_EXACT_MODULO_DEBUG_LOCATION_AND_BIJECTIVE_SSA_ALPHA_RENAMING",
+    "total_PTO_files": 575,
+    "only_normalized": [
+      "debug source locations",
+      "bijective SSA names by first occurrence"
+    ],
+    "constant_mutation_rejected": true,
+    "source_math_rounding_layout_loops_not_normalized": true,
+    "NN_executions": 0
+  },
+  "dependency_contract": {
+    "pypto_commit": "98752784548b777b2377a9084411c3716eb341d6",
+    "historical_contract_receipt": "task-contract-v39.json",
+    "historical_contract_sha256": "3fa7dc5bf73860c57fd798df2ddefab64cdf65bd1d39a39ed23f7cc644dd3717",
+    "historical_NZ_overlay_manifest_sha256": "9541666f82c89331e505df95c3231fabe693a21ef24be32b6626d4b77be171c2",
+    "original_compiled_program_py_sha256": "a830c800b24986b279045f0c0ea98be5047472e56e3e0d5e39d15d786f63b32a",
+    "historical_NZ_compiled_program_py_sha256": "41116deca9f5c64fa4b5755cdf3fc745685d0fd2c6e10d67293d4611d20f025b",
+    "native_extension_sha256": "d74fc8e689f0b00db7e4282419d14b205ccf652ed31a86a6432f862e1df8489c",
+    "simpler_ptoas_versions": "Not individually frozen in the selected Main/export receipts; use pinned PyPTO dependencies and revalidate deployment.",
+    "current_adapter": "Known-source-SHA-guarded process-local logical NZ shape compatibility; installed library files unchanged.",
+    "current_adapter_full_device_service_equivalence_accepted": false
+  },
+  "nz_binding_CPU_equivalence": {
+    "receipt": "nz-binding-equivalence.json",
+    "receipt_sha256": "fcaaac2684b7731a8c0a9336ca9ea1ce41de5cd08e80eb8bd4924037b76cd391",
+    "outcome": "PASS",
+    "tested_shape_cases": 448,
+    "reference_overlay_sha256": "41116deca9f5c64fa4b5755cdf3fc745685d0fd2c6e10d67293d4611d20f025b",
+    "adapter_sha256": "de444f571d7d2b563f937eafbe605d5013e09b45a3977f1b02fd2add5f90542d",
+    "source_library_unchanged": true,
+    "installation_idempotent": true,
+    "device_tensor_dtype_and_shape_rejections_preserved": true,
+    "new_device_worker_constructions": 0,
+    "new_model_executions": 0
+  }
+}

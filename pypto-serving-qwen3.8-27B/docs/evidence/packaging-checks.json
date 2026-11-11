@@ -1,0 +1,15 @@
+{
+  "outcome": "PASS",
+  "tested_shape_cases": 448,
+  "reference_overlay_sha256": "41116deca9f5c64fa4b5755cdf3fc745685d0fd2c6e10d67293d4611d20f025b",
+  "adapter_sha256": "de444f571d7d2b563f937eafbe605d5013e09b45a3977f1b02fd2add5f90542d",
+  "source_library_unchanged": true,
+  "installation_idempotent": true,
+  "device_tensor_dtype_and_shape_rejections_preserved": true,
+  "new_device_worker_constructions": 0,
+  "new_model_executions": 0,
+  "scheduler_and_owner_CPU_tests": 11,
+  "entrypoint_and_NZ_boundary_CPU_tests": 6,
+  "complete_import_and_graph_entrypoints": "PASS",
+  "new_standalone_service_NPU_or_HTTP_acceptance": false
+}

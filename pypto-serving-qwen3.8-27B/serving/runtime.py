@@ -20,8 +20,11 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5TextRotaryEmbedd
 
 from .kv_cache import CacheCapacityError, KVCache, RequestPages
 from .model import (BATCH, BLOCK_SIZE, CONTEXT, HIDDEN, POOL_BLOCKS, ROWS,
-                    VOCAB, tp_rank_TP_VOCAB, CandidateExchange, decode_fwd,
-                    prefill_fwd, tp_decode_fwd, tp_prefill_fwd)
+                    VOCAB, tp_rank_TP_VOCAB, CandidateExchange, prefill_fwd,
+                    tp_prefill_fwd, tp_decode_fwd)
+from .model_decode import decode_fwd
+
+DECODE_ROWS = 8
 from .schedule import BatchSlot, RequestCapacityError, RequestState
 from .weight import TextWeights
 
@@ -97,13 +100,21 @@ class ModelRunner:
         self.counts = torch.zeros(BATCH, dtype=torch.int32).share_memory_()
         self.offsets = torch.zeros(BATCH, dtype=torch.int32).share_memory_()
         self.tables = torch.zeros((BATCH, CONTEXT // BLOCK_SIZE), dtype=torch.int32).share_memory_()
+        self.decode_ids = torch.zeros((BATCH, DECODE_ROWS), dtype=torch.int32).share_memory_()
+        self.decode_cos = torch.ones((BATCH, DECODE_ROWS, 64), dtype=torch.bfloat16).share_memory_()
+        self.decode_sin = torch.zeros_like(self.decode_cos).share_memory_()
+        self.decode_masks = torch.full((BATCH, DECODE_ROWS, CONTEXT), -10000.0).share_memory_()
+        self.decode_counts = torch.zeros(BATCH, dtype=torch.int32).share_memory_()
+        self.decode_offsets = torch.zeros(BATCH, dtype=torch.int32).share_memory_()
+        self.decode_tables = torch.zeros((BATCH, CONTEXT // BLOCK_SIZE), dtype=torch.int32).share_memory_()
 
     def start(self) -> None:
         if self.worker is not None:
             raise RuntimeError("Model runner is already started")
         samples = single_meta_samples()
+        decode_samples = single_decode_meta_samples()
         self.prefill = prefill_fwd.compile(*samples, 1, config=self.config)
-        self.decode = decode_fwd.compile(*samples, 1, config=self.config)
+        self.decode = decode_fwd.compile(*decode_samples, 1, config=self.config)
         self.rope = rotary_tables(self.model_root)
         if self.rope["cos"].shape != (CONTEXT, 64) or self.rope["sin"].shape != (CONTEXT, 64):
             raise ValueError("Invalid RoPE table")
@@ -123,6 +134,8 @@ class ModelRunner:
                     shape, dtype, init=torch.zeros(shape, dtype=dtype)))
             self.traces = self.worker.alloc_tensor((BATCH, 66, ROWS, HIDDEN), torch.bfloat16)
             self.logits = self.worker.alloc_tensor((BATCH, ROWS, VOCAB), torch.bfloat16)
+            self.decode_traces = self.worker.alloc_tensor((BATCH, 66, DECODE_ROWS, HIDDEN), torch.bfloat16)
+            self.decode_logits = self.worker.alloc_tensor((BATCH, DECODE_ROWS, VOCAB), torch.bfloat16)
             self._sample_memory()
         except BaseException:
             self.close()
@@ -133,7 +146,8 @@ class ModelRunner:
         if worker is None:
             return
         try:
-            for handle in (getattr(self, "logits", None), getattr(self, "traces", None)):
+            for handle in (getattr(self, "decode_logits", None), getattr(self, "decode_traces", None),
+                           getattr(self, "logits", None), getattr(self, "traces", None)):
                 if handle is not None:
                     worker.free_tensor(handle)
             for handle in reversed(self.resident):
@@ -238,25 +252,32 @@ class ModelRunner:
             self.requests[request_id].slot = index
 
     @staticmethod
-    def _mask(count: int, offset: int) -> torch.Tensor:
-        mask = torch.full((ROWS, CONTEXT), -10000.0, dtype=torch.float32)
-        for row in range(ROWS):
+    def _mask(count: int, offset: int, rows: int = ROWS) -> torch.Tensor:
+        mask = torch.full((rows, CONTEXT), -10000.0, dtype=torch.float32)
+        for row in range(rows):
             mask[row, :min(offset + row + 1, offset + count)] = 0.0
         return mask
 
-    def _logit_row(self, slot: int, row: int) -> torch.Tensor:
+    def _logit_row(self, slot: int, row: int, *, rows: int = ROWS, logits=None) -> torch.Tensor:
         assert self.worker is not None
         host = torch.empty(VOCAB, dtype=torch.bfloat16)
-        offset = (slot * ROWS + row) * VOCAB * 2
-        self._copy_offset(host, self.logits, offset, False)
+        offset = (slot * rows + row) * VOCAB * 2
+        self._copy_offset(host, self.logits if logits is None else logits, offset, False)
         return host
 
     def run_batch(self, slots: list[BatchSlot]) -> list[int | None]:
         if self.worker is None or not (1 <= len(slots) <= BATCH):
             raise RuntimeError("Invalid model batch")
         self._compact(slots)
-        ids, cos, sin = self.ids, self.cos, self.sin
-        masks, counts, offsets, tables = self.masks, self.counts, self.offsets, self.tables
+        decode_only = all(slot.phase == "decode" for slot in slots)
+        rows = DECODE_ROWS if decode_only else ROWS
+        ids = self.decode_ids if decode_only else self.ids
+        cos = self.decode_cos if decode_only else self.cos
+        sin = self.decode_sin if decode_only else self.sin
+        masks = self.decode_masks if decode_only else self.masks
+        counts = self.decode_counts if decode_only else self.counts
+        offsets = self.decode_offsets if decode_only else self.offsets
+        tables = self.decode_tables if decode_only else self.tables
         ids.zero_()
         cos.fill_(1)
         sin.zero_()
@@ -276,16 +297,18 @@ class ModelRunner:
             ids[index, :count] = torch.tensor(slot.token_ids, dtype=torch.int32)
             cos[index, :count] = self.rope["cos"][position:position + count]
             sin[index, :count] = self.rope["sin"][position:position + count]
-            masks[index] = self._mask(count, position)
+            masks[index] = self._mask(count, position, rows)
             counts[index], offsets[index] = count, position
             tables[index] = self.cache.table(resident.pages)
-        graph = self.prefill if any(slot.phase == "prefill" for slot in slots) else self.decode
+        graph = self.prefill if not decode_only else self.decode
         if self.on_activation is not None:
             self.on_activation("graph_start", {"time_ns": time.monotonic_ns(),
                                                "device": self.device_id,
                                                "phases": [slot.phase for slot in slots]})
+        traces = self.decode_traces if decode_only else self.traces
+        logits = self.decode_logits if decode_only else self.logits
         self.worker.run(graph, ids, *self.banks, cos, sin, masks, counts, offsets,
-                        *self.resident, tables, self.traces, self.logits, len(slots), config=self.config)
+                        *self.resident, tables, traces, logits, len(slots), config=self.config)
         if self.on_activation is not None:
             self.on_activation("graph_end", {"time_ns": time.monotonic_ns(),
                                              "device": self.device_id})
@@ -302,7 +325,7 @@ class ModelRunner:
             if slot.phase == "prefill" and not slot.completes_prefill:
                 output.append(None)
             else:
-                row = self._logit_row(index, len(slot.token_ids) - 1)
+                row = self._logit_row(index, len(slot.token_ids) - 1, rows=rows, logits=logits)
                 output.append(int(row.float().argmax()))
         self._sample_memory()
         return output
@@ -316,6 +339,17 @@ def single_meta_samples() -> list[torch.Tensor]:
                for sample in samples]
     tensors[3] = torch.empty((VOCAB, HIDDEN), dtype=torch.bfloat16, device="meta")
     tensors[-1] = torch.empty((BATCH, ROWS, VOCAB), dtype=torch.bfloat16, device="meta")
+    return tensors
+
+
+def single_decode_meta_samples() -> list[torch.Tensor]:
+    tensors = single_meta_samples()
+    tensors[0] = torch.empty((BATCH, DECODE_ROWS), dtype=torch.int32, device="meta")
+    tensors[24] = torch.empty((BATCH, DECODE_ROWS, 64), dtype=torch.bfloat16, device="meta")
+    tensors[25] = torch.empty((BATCH, DECODE_ROWS, 64), dtype=torch.bfloat16, device="meta")
+    tensors[26] = torch.empty((BATCH, DECODE_ROWS, CONTEXT), dtype=torch.float32, device="meta")
+    tensors[34] = torch.empty((BATCH, 66, DECODE_ROWS, HIDDEN), dtype=torch.bfloat16, device="meta")
+    tensors[35] = torch.empty((BATCH, DECODE_ROWS, VOCAB), dtype=torch.bfloat16, device="meta")
     return tensors
 
 def tp_meta_samples() -> list[torch.Tensor]:
@@ -481,7 +515,7 @@ class TensorParallelRunner:
             self.requests[request_id] = (index, pages)
 
     def run_batch(self, slots: list[BatchSlot]) -> list[int | None]:
-        if self.worker is None or not 1 <= len(slots) <= 2:
+        if self.worker is None or not 1 <= len(slots) <= BATCH:
             raise RuntimeError('Invalid TP batch')
         self._compact(slots)
         self.ids.zero_()
