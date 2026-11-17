@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import contextvars
 import queue
+import secrets
+import torch
 import threading
 import time
 import uuid
@@ -12,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
-from .model import CONTEXT, ROWS
+from .distributed import SamplingParams
 
 
 @dataclass(eq=False)
@@ -31,6 +33,10 @@ class RequestState:
     finish_reason: str | None = None
     stop_match: str | None = None
     runtime_state: Any = None
+    sampling: SamplingParams = field(default_factory=SamplingParams)
+    generator: torch.Generator = field(default_factory=lambda: torch.Generator().manual_seed(secrets.randbits(63)))
+    detokenizer: Any = None
+    text: str = ""
 
     def metrics(self) -> dict[str, float | int | None]:
         ttft = ((self.token_times_ns[0] - self.submitted_ns) / 1e6
@@ -61,17 +67,34 @@ class BatchRunner(Protocol):
     def start(self) -> None: ...
     def close(self) -> None: ...
     def admit(self, request: RequestState) -> int: ...
-    def run_batch(self, slots: list[BatchSlot]) -> list[int | None]: ...
+    def run_batch(self, slots: list[BatchSlot]) -> list[list[int] | None]: ...
     def release(self, request: RequestState) -> None: ...
 
 
 class Scheduler:
     def __init__(self, runner: BatchRunner, stop_token_ids: frozenset[int],
-                 max_active: int = 8, max_queued: int = 64,
+                 max_active: int = 32, max_queued: int = 128,
+                 max_model_len: int = 133120, token_budget: int = 16384,
+                 detokenizer_factory=None,
                  on_trace: Callable[[str, dict], None] | None = None,
-                 decode_tokens: Callable[[list[int]], str] | None = None):
-        if not (1 <= max_active <= 8):
-            raise ValueError("The compiled batch capacity is at most eight requests")
+                 decode_tokens: Callable[[list[int]], str] | None = None,
+                 long_prefill_token_threshold: int = 512,
+                 speculative_tokens: int = 3):
+        if not (1 <= max_active <= 32):
+            raise ValueError("The device slot capacity is 32 requests")
+        if (type(long_prefill_token_threshold) is not int or
+                not 0 <= long_prefill_token_threshold <= max_model_len):
+            raise ValueError("long_prefill_token_threshold must be a nonnegative integer <= max_model_len")
+        if type(speculative_tokens) is not int or speculative_tokens not in (0, 3):
+            raise ValueError("speculative_tokens must be 0 or 3")
+        if type(token_budget) is not int or token_budget < max_active * (1 + speculative_tokens):
+            raise ValueError("Token budget must cover every active decode/verification request")
+        self.long_prefill_token_threshold = long_prefill_token_threshold
+        self.speculative_tokens = speculative_tokens
+        self._prefill_order: deque[str] = deque()
+        self.max_model_len = max_model_len
+        self.token_budget = token_budget
+        self.detokenizer_factory = detokenizer_factory
         self.runner = runner
         self.stop_token_ids = stop_token_ids
         self.max_active = max_active
@@ -94,19 +117,25 @@ class Scheduler:
 
     def start(self) -> None:
         self.thread.start()
-        if not self.ready.wait(timeout=600):
+        if not self.ready.wait(timeout=1800):
             raise RuntimeError("Batch runner startup timed out")
         if self.error is not None:
             raise RuntimeError("Batch runner failed to start") from self.error
 
     def submit(self, prompt_ids: list[int], max_tokens: int,
-               stop_strings: tuple[str, ...] = ()) -> RequestState:
+               stop_strings: tuple[str, ...] = (),
+               sampling: SamplingParams | None = None,
+               ignore_eos: bool = False) -> RequestState:
         if not self.ready.is_set() or self.stopping.is_set() or self.error is not None:
             raise RuntimeError("Batch scheduler is unavailable")
-        if not prompt_ids or max_tokens < 1 or len(prompt_ids) + max_tokens > CONTEXT:
+        if not prompt_ids or max_tokens < 1 or len(prompt_ids) + max_tokens > self.max_model_len:
             raise ValueError("Prompt and completion exceed the supported context")
-        request = RequestState(prompt_ids, max_tokens, self.stop_token_ids,
-                               stop_strings=stop_strings)
+        request = RequestState(prompt_ids, max_tokens, frozenset() if ignore_eos else self.stop_token_ids,
+                               stop_strings=stop_strings, sampling=sampling or SamplingParams())
+        if request.sampling.seed is not None:
+            request.generator.manual_seed(request.sampling.seed)
+        if self.detokenizer_factory is not None:
+            request.detokenizer = self.detokenizer_factory()
         with self.lock:
             if len(self.pending) + self.incoming.qsize() >= self.max_queued:
                 raise RuntimeError("Request queue is full")
@@ -167,16 +196,94 @@ class Scheduler:
                             prefix_tokens=request.prefill_offset)
             except BaseException as exc:
                 request.events.put(("error", str(exc)))
+                if getattr(self.runner, "terminal_device_error", None) is not None:
+                    raise  # Fatal devicefailure must reach owner-thread finallyclose.
 
-    def _slot(self, request: RequestState) -> BatchSlot:
+    def _prefill_limit(self, request: RequestState) -> int:
+        remaining = len(request.prompt_ids) - request.prefill_offset
+        limit = min(self.long_prefill_token_threshold, remaining) if self.long_prefill_token_threshold else remaining
+        # A miss must reach the committed prefix checkpoint before continuing.
+        # This boundary is independent of the model's internal 16-row tiles.
+        if request.prefill_offset < 32:
+            limit = min(limit, 32 - request.prefill_offset)
+        return limit
+
+    def _decode_cost(self, request: RequestState) -> int:
+        remaining = max(0, request.max_tokens - len(request.generated) - 1)
+        return 1 + min(self.speculative_tokens, remaining)
+
+    def _slot(self, request: RequestState, prefill_quota: int | None = None) -> BatchSlot:
         if request.prefill_offset < len(request.prompt_ids):
             position = request.prefill_offset
-            tokens = tuple(request.prompt_ids[position:position + ROWS])
+            quota = self._prefill_limit(request)
+            if prefill_quota is not None:
+                quota = min(quota, prefill_quota)
+            if quota <= 0:
+                raise RuntimeError("Scheduled prefill requires a positive token allocation")
+            tokens = tuple(request.prompt_ids[position:position + quota])
             return BatchSlot(request, tokens, position, "prefill",
                              position + len(tokens) == len(request.prompt_ids))
         return BatchSlot(request, (request.generated[-1],),
                          len(request.prompt_ids) + len(request.generated) - 1,
                          "decode", False)
+
+    def _batch_slots(self, requests: list[RequestState]) -> list[BatchSlot]:
+        prefills = [r for r in requests if r.prefill_offset < len(r.prompt_ids)]
+        reserved = sum(self._decode_cost(r) for r in requests if r not in prefills)
+        available = self.token_budget - reserved
+        if available < 0:
+            raise RuntimeError("Decode/verification reservation exceeds the token budget")
+        # Keep a stable round-robin queue across admission, completion and cancel.
+        # A selected request receives its full legal chunk before the next one;
+        # only the last grant may be limited by the remaining global budget.
+        # This permits large chunks without reducing resident request capacity.
+        by_id = {r.request_id: r for r in prefills}
+        self._prefill_order = deque(key for key in self._prefill_order if key in by_id)
+        known = set(self._prefill_order)
+        self._prefill_order.extend(r.request_id for r in prefills if r.request_id not in known)
+        quotas = {}
+        allocation_trace = []
+        for _ in range(len(self._prefill_order)):
+            if available <= 0:
+                break
+            key = self._prefill_order.popleft()
+            request = by_id[key]
+            remaining = len(request.prompt_ids) - request.prefill_offset
+            limit = self._prefill_limit(request)
+            grant = min(limit, available)
+            reasons = []
+            if grant == remaining:
+                reasons.append('remaining_prompt')
+            if self.long_prefill_token_threshold and grant == self.long_prefill_token_threshold:
+                reasons.append('positive_threshold')
+            if request.prefill_offset < 32 and grant == 32 - request.prefill_offset:
+                reasons.append('prefix_checkpoint')
+            if grant == available:
+                reasons.append('global_budget')
+            allocation_trace.append({'request_id': key, 'position': request.prefill_offset,
+                'remaining_prompt': remaining, 'legal_request_limit': limit,
+                'budget_before': available, 'tokens': grant,
+                'budget_after': available - grant, 'limiting_factors': reasons})
+            quotas[key] = grant
+            available -= grant
+            self._prefill_order.append(key)
+        allocation = list(quotas.values())
+        slots = [self._slot(r, quotas.get(r.request_id)) for r in requests
+                 if r.request_id not in by_id or r.request_id in quotas]
+        target_tokens = reserved + sum(allocation)
+        if target_tokens > self.token_budget:
+            raise RuntimeError("Scheduler exceeded its target-model token budget")
+        self._trace("token_budget", decode_verification_reserved=reserved,
+                    prefill_tokens=sum(allocation), target_tokens=target_tokens,
+                    budget_before_prefill=self.token_budget - reserved,
+                    budget_after_prefill=available, allocation_order=allocation_trace,
+                    unselected_request_ids=[r.request_id for r in prefills if r.request_id not in quotas],
+                    prefill_chunk_mode='budget' if self.long_prefill_token_threshold == 0 else 'capped',
+                    resident_requests=len(requests), selected_prefills=len(quotas),
+                    deferred_prefills=len(prefills) - len(quotas),
+                    max_num_batched_tokens=self.token_budget,
+                    long_prefill_token_threshold=self.long_prefill_token_threshold)
+        return slots
 
     def _finish(self, request: RequestState, kind: str, value: Any) -> None:
         request.events.put((kind, value))
@@ -196,7 +303,7 @@ class Scheduler:
         if not self.active:
             time.sleep(0.005)
             return
-        slots = [self._slot(request) for request in self.active[:self.max_active]]
+        slots = self._batch_slots(self.active[:self.max_active])
         self.batch_number += 1
         self._trace("batch_submit", batch=self.batch_number,
                     slots=[{"request_id": slot.request.request_id,
@@ -216,6 +323,12 @@ class Scheduler:
                     outputs = future.result(timeout=0.05)
                     break
                 except FutureTimeout:
+                    if future.done():
+                        # Distinguish a completed native TimeoutError from a poll
+                        # that raced successful completion. This reads the SAME
+                        # Future result; it never resubmits device work.
+                        outputs = future.result()
+                        break
                     continue
             self._trace("device_complete", batch=self.batch_number)
             if len(outputs) != len(slots):
@@ -232,7 +345,7 @@ class Scheduler:
             raise
         self._trace("batch_complete", batch=self.batch_number)
         finished = []
-        for slot, token in zip(slots, outputs):
+        for slot, tokens in zip(slots, outputs):
             request = slot.request
             if request.cancelled.is_set():
                 self._finish(request, "cancelled", request.metrics())
@@ -241,34 +354,42 @@ class Scheduler:
             if slot.phase == "prefill":
                 request.prefill_offset += len(slot.token_ids)
             if slot.phase == "prefill" and not slot.completes_prefill:
-                if token is not None:
+                if tokens is not None:
                     raise RuntimeError("Intermediate prefill chunk emitted a token")
                 continue
-            if token is None:
-                raise RuntimeError("Final prefill or decode slot omitted a token")
-            request.generated.append(token)
-            at_ns = time.monotonic_ns()
-            request.token_times_ns.append(at_ns)
-            reason = "stop" if token in request.stop_token_ids else None
-            if reason is None and request.stop_strings and self.decode_tokens is not None:
-                rendered = self.decode_tokens(request.generated)
-                matches = [(rendered.index(value), value) for value in request.stop_strings
-                           if value in rendered]
-                if matches:
-                    request.stop_match = min(matches)[1]
-                    reason = "stop"
-            if reason is None and len(request.generated) >= request.max_tokens:
-                reason = "length"
-            request.events.put(("token", {"token_id": token, "time_ns": at_ns,
-                                          "finish_reason": reason,
-                                          "generated": tuple(request.generated),
-                                          "stop_match": request.stop_match}))
-            if reason is not None:
-                request.finish_reason = reason
-                self._finish(request, "done", {"finish_reason": reason,
-                                               "stop_match": request.stop_match,
-                                               "metrics": request.metrics()})
-                finished.append(request)
+            if not isinstance(tokens, list) or not tokens:
+                raise RuntimeError("Final prefill or decode omitted committed token IDs")
+            for token in tokens:
+                request.generated.append(token)
+                at_ns = time.monotonic_ns()
+                request.token_times_ns.append(at_ns)
+                reason = "stop" if token in request.stop_token_ids else None
+                if request.detokenizer is not None:
+                    request.text += request.detokenizer.push(token)
+                elif self.decode_tokens is not None:
+                    request.text = self.decode_tokens(request.generated)
+                if reason is None and request.stop_strings:
+                    matches = [(request.text.index(value), value) for value in request.stop_strings
+                               if value in request.text]
+                    if matches:
+                        request.stop_match = min(matches)[1]
+                        reason = "stop"
+                if reason is None and len(request.generated) >= request.max_tokens:
+                    reason = "length"
+                if reason is not None and request.detokenizer is not None:
+                    request.text += request.detokenizer.finish()
+                request.events.put(("token", {"token_id": token, "time_ns": at_ns,
+                                              "finish_reason": reason,
+                                              "generated": tuple(request.generated),
+                                              "text": request.text,
+                                              "stop_match": request.stop_match}))
+                if reason is not None:
+                    request.finish_reason = reason
+                    self._finish(request, "done", {"finish_reason": reason,
+                                                   "stop_match": request.stop_match,
+                                                   "metrics": request.metrics()})
+                    finished.append(request)
+                    break
         if finished:
             ids = {request.request_id for request in finished}
             self.active = [request for request in self.active if request.request_id not in ids]

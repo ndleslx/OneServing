@@ -8,41 +8,63 @@ import os
 import queue
 import resource
 import time
-import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from .engine import MODEL_NAME, InferenceEngine
-from .distributed import ReplicaRouter, TensorParallelEngine
+from .distributed import ServingConfig, SamplingParams
 
 
 class CompletionInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: str = MODEL_NAME
     prompt: str | list[int]
-    max_tokens: int = Field(default=32, ge=1, le=512)
-    temperature: float = 0
+    repetition_penalty: Literal[1.0] = 1.0
+    logprobs: None = None
+    max_tokens: int = Field(default=32, ge=1, le=262144,
+                            validation_alias=AliasChoices("max_tokens", "max_completion_tokens"))
+    temperature: float = Field(default=0, ge=0, allow_inf_nan=False)
+    top_p: float = Field(default=1, gt=0, le=1, allow_inf_nan=False)
+    top_k: int | None = Field(default=None, ge=1)
+    seed: int | None = Field(default=None, ge=0, lt=2**63)
+    ignore_eos: bool = False
+    return_token_ids: Literal[True] = True
+    stream_options: dict[str, bool] | None = None
     stream: bool = False
     stop: str | list[str] | None = None
+
+
+class TextContent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["text"]
+    text: str
 
 
 class ChatMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
     role: Literal["system", "user", "assistant"]
-    content: str
+    content: str | list[TextContent]
 
 
 class ChatInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: str = MODEL_NAME
     messages: list[ChatMessage] = Field(min_length=1)
-    max_tokens: int = Field(default=32, ge=1, le=512)
-    temperature: float = 0
+    chat_template_kwargs: dict[str, bool] | None = None
+    max_tokens: int = Field(default=32, ge=1, le=262144,
+                            validation_alias=AliasChoices("max_tokens", "max_completion_tokens"))
+    temperature: float = Field(default=0, ge=0, allow_inf_nan=False)
+    top_p: float = Field(default=1, gt=0, le=1, allow_inf_nan=False)
+    top_k: int | None = Field(default=None, ge=1)
+    seed: int | None = Field(default=None, ge=0, lt=2**63)
+    ignore_eos: bool = False
+    return_token_ids: Literal[True] = True
+    stream_options: dict[str, bool] | None = None
     stream: bool = False
     stop: str | list[str] | None = None
 
@@ -56,36 +78,24 @@ def stop_strings(value: str | list[str] | None) -> tuple[str, ...]:
     return values
 
 
-def validate(model: str, temperature: float) -> None:
-    if model != MODEL_NAME:
+def validate(body) -> SamplingParams:
+    if body.model != MODEL_NAME:
         raise HTTPException(400, "Unsupported model")
-    if temperature != 0:
-        raise HTTPException(400, "Only greedy temperature=0 is supported")
+    if body.stream_options is not None and set(body.stream_options) - {"include_usage"}:
+        raise HTTPException(400, "Unsupported stream option")
+    template = getattr(body, "chat_template_kwargs", None)
+    if template is not None and (set(template) - {"enable_thinking"} or template.get("enable_thinking", False)):
+        raise HTTPException(400, "This service uses the non-thinking chat template")
+    try:
+        return SamplingParams(body.temperature, body.top_p, body.top_k, body.seed)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    assignment = os.environ.get("TASK_DEVICE", "0")
-    devices = tuple(int(value) for value in assignment.split(","))
-    dp = int(os.environ.get("DP", "1"))
-    tp = int(os.environ.get("TP", "1"))
-    root = Path(os.environ["MODEL_ROOT"])
-    max_active = int(os.environ.get("MAX_ACTIVE", "2"))
-    prefix_setting = os.environ.get("PREFIX_CACHE", "1")
-    if prefix_setting not in ("0", "1"):
-        raise RuntimeError("PREFIX_CACHE must be 0 or 1")
-    prefix_cache = prefix_setting == "1"
-    if dp == 1 and tp == 1 and len(devices) == 1:
-        engine = InferenceEngine(root, devices[0], max_active=max_active,
-                                 prefix_cache=prefix_cache)
-    elif dp == 2 and tp == 1 and len(devices) == 2:
-        engine = ReplicaRouter(root, devices, max_active=max_active,
-                               prefix_cache=prefix_cache)
-    elif dp == 1 and tp == 2 and len(devices) == 2:
-        engine = TensorParallelEngine(root, devices, max_active=max_active,
-                                      prefix_cache=prefix_cache)
-    else:
-        raise RuntimeError("DP/TP topology does not match assigned device count")
+    config = ServingConfig.from_env()
+    engine = InferenceEngine(config)
     await asyncio.to_thread(engine.start)
     app.state.engine = engine
     try:
@@ -123,14 +133,9 @@ async def next_event(job, request: Request):
             continue
 
 
-def visible_text(engine: InferenceEngine, token_ids: list[int], stop_match: str | None) -> str:
-    text = engine.decode(token_ids)
-    return text.split(stop_match, 1)[0] if stop_match else text
-
-
 async def respond(job, request: Request, chat: bool):
     engine: InferenceEngine = app.state.engine
-    response_id = ("chatcmpl-" if chat else "cmpl-") + uuid.uuid4().hex
+    response_id = ("chatcmpl-" if chat else "cmpl-") + job.request_id
     created = int(time.time())
     object_name = "chat.completion" if chat else "text_completion"
 
@@ -143,6 +148,7 @@ async def respond(job, request: Request, chat: bool):
             if chat:
                 yield "data: " + json.dumps({"id": response_id, "object": "chat.completion.chunk",
                                              "created": created, "model": MODEL_NAME,
+                                             "prompt_token_ids": job.prompt_ids,
                                              "choices": [{"index": 0, "delta": {"role": "assistant"},
                                                           "finish_reason": None}]}) + "\n\n"
             while True:
@@ -150,7 +156,9 @@ async def respond(job, request: Request, chat: bool):
                 if kind == "token":
                     generated = list(value["generated"])
                     finished = value["finish_reason"]
-                    text = visible_text(engine, generated, value["stop_match"])
+                    text = value["text"]
+                    if value["stop_match"]:
+                        text = text.split(value["stop_match"], 1)[0]
                     safe = len(text) if finished else max(0, len(text) - max_hold + 1)
                     if not text.startswith(emitted):
                         raise RuntimeError("Tokenizer output changed an already streamed prefix")
@@ -169,7 +177,8 @@ async def respond(job, request: Request, chat: bool):
                     usage = {"prompt_tokens": len(job.prompt_ids),
                              "completion_tokens": len(generated),
                              "total_tokens": len(job.prompt_ids) + len(generated)}
-                    yield "data: " + json.dumps({"id": response_id, "object": object_name + ".chunk",
+                    if getattr(job, "include_usage", False):
+                        yield "data: " + json.dumps({"id": response_id, "object": object_name + ".chunk",
                                                  "created": created, "model": MODEL_NAME,
                                                  "choices": [], "usage": usage,
                                                  "metrics": value["metrics"]}) + "\n\n"
@@ -205,7 +214,7 @@ async def respond(job, request: Request, chat: bool):
                 raise HTTPException(500, str(value))
             else:
                 raise HTTPException(499, "Client disconnected")
-        text = visible_text(engine, generated, stop_match)
+        text = job.text.split(stop_match, 1)[0] if stop_match else job.text
         usage = {"prompt_tokens": len(job.prompt_ids), "completion_tokens": len(generated),
                  "total_tokens": len(job.prompt_ids) + len(generated)}
         choice = ({"index": 0, "message": {"role": "assistant", "content": text},
@@ -214,6 +223,7 @@ async def respond(job, request: Request, chat: bool):
                                 "token_ids": generated, "finish_reason": finish_reason})
         return {"id": response_id, "object": object_name, "created": created,
                 "model": MODEL_NAME, "choices": [choice], "usage": usage,
+                "prompt_token_ids": job.prompt_ids,
                 "metrics": timing}
     finally:
         job.cancelled.set()
@@ -221,31 +231,37 @@ async def respond(job, request: Request, chat: bool):
 
 @app.post("/v1/completions")
 async def completions(body: CompletionInput, request: Request):
-    validate(body.model, body.temperature)
+    sampling = validate(body)
     engine: InferenceEngine = app.state.engine
     try:
         stops = stop_strings(body.stop)
-        job = (engine.submit_text(body.prompt, body.max_tokens, stops)
+        job = (engine.submit_text(body.prompt, body.max_tokens, stops, sampling, body.ignore_eos)
                if isinstance(body.prompt, str) else
-               engine.submit_tokens(body.prompt, body.max_tokens, stops))
+               engine.submit_tokens(body.prompt, body.max_tokens, stops, sampling, body.ignore_eos))
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(503, str(exc)) from exc
     job.stream = body.stream
+    job.include_usage = bool((body.stream_options or {}).get("include_usage", False))
     return await respond(job, request, False)
 
 
 @app.post("/v1/chat/completions")
 async def chat_completions(body: ChatInput, request: Request):
-    validate(body.model, body.temperature)
+    sampling = validate(body)
     engine: InferenceEngine = app.state.engine
     try:
-        job = engine.submit_chat([message.model_dump() for message in body.messages],
-                                 body.max_tokens, stop_strings(body.stop))
+        messages = [{"role": message.role,
+                     "content": message.content if isinstance(message.content, str)
+                     else "".join(part.text for part in message.content)}
+                    for message in body.messages]
+        job = engine.submit_chat(messages,
+                                 body.max_tokens, stop_strings(body.stop), sampling, body.ignore_eos)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(503, str(exc)) from exc
     job.stream = body.stream
+    job.include_usage = bool((body.stream_options or {}).get("include_usage", False))
     return await respond(job, request, True)
