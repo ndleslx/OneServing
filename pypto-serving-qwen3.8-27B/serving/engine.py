@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import threading
+import os
+import json
 from collections import deque
 from pathlib import Path
 
 from transformers import AutoTokenizer
 
-from .runtime import ModelRunner
+from .distributed import ServingConfig, SamplingParams
 from .schedule import RequestState, Scheduler
 
 
-MODEL_NAME = "Qwen3.8-27B-PyPTO"
+MODEL_NAME = os.environ.get("SERVED_MODEL_NAME", "qwen3.8-27B")
 
 
 def percentile(values: list[float], fraction: float) -> float | None:
@@ -26,27 +28,31 @@ def percentile(values: list[float], fraction: float) -> float | None:
 
 
 class InferenceEngine:
-    def __init__(self, model_root: Path, device_id: int,
-                 max_active: int = 2, prefix_cache: bool = True):
-        if not 1 <= max_active <= 2:
-            raise ValueError("This runtime has validated at most two active device slots")
-        self.model_root = model_root
-        self.device_id = device_id
+    def __init__(self, config: ServingConfig):
+        from .runtime import TensorParallelRunner
+        self.config = config
+        self.model_root = config.model_root
+        self.device_id = list(config.devices)
         self.tokenizer = AutoTokenizer.from_pretrained(
-            model_root, local_files_only=True, trust_remote_code=False)
+            config.model_root, local_files_only=True, trust_remote_code=False)
         eos = self.tokenizer.eos_token_id
+        generation = json.loads((config.model_root / "generation_config.json").read_text())
+        eos = generation.get("eos_token_id", eos)
         eos_ids = frozenset({eos} if isinstance(eos, int) else (eos or []))
         self.lock = threading.Lock()
         self.events: deque[dict] = deque(maxlen=10000)
         self.completed: deque[dict] = deque(maxlen=10000)
         self.errors = 0
         self.cancelled = 0
-        self.runner = ModelRunner(model_root, device_id,
-                                  on_cache_event=self._on_cache)
-        self.runner.allow_prefix_hits = prefix_cache
-        self.scheduler = Scheduler(self.runner, eos_ids, max_active=max_active,
-                                   on_trace=self._on_trace,
-                                   decode_tokens=self.decode)
+        self.runner = TensorParallelRunner(config, on_cache_event=self._on_cache)
+        self.runner.allow_prefix_hits = config.prefix_cache
+        self.scheduler = Scheduler(self.runner, eos_ids, max_active=config.max_num_seqs,
+                                   max_model_len=config.max_model_len,
+                                   token_budget=config.max_num_batched_tokens,
+                                   long_prefill_token_threshold=config.long_prefill_token_threshold,
+                                   speculative_tokens=config.speculative_tokens,
+                                   on_trace=self._on_trace, decode_tokens=self.decode,
+                                   detokenizer_factory=lambda: IncrementalDetokenizer(self.tokenizer))
 
     def _on_cache(self, name: str, fields: dict) -> None:
         with self.lock:
@@ -75,25 +81,31 @@ class InferenceEngine:
                                      clean_up_tokenization_spaces=False)
 
     def submit_tokens(self, prompt_ids: list[int], max_tokens: int,
-                      stop_strings: tuple[str, ...] = ()) -> RequestState:
+                      stop_strings: tuple[str, ...] = (),
+                      sampling: SamplingParams | None = None,
+                      ignore_eos: bool = False) -> RequestState:
         if any(not isinstance(token, int) or not 0 <= token < 248320 for token in prompt_ids):
             raise ValueError("Prompt contains an invalid token ID")
         if any(not value for value in stop_strings):
             raise ValueError("Stop strings must be nonempty")
-        return self.scheduler.submit(prompt_ids, max_tokens, stop_strings)
+        return self.scheduler.submit(prompt_ids, max_tokens, stop_strings, sampling, ignore_eos)
 
     def submit_text(self, prompt: str, max_tokens: int,
-                    stop_strings: tuple[str, ...] = ()) -> RequestState:
+                    stop_strings: tuple[str, ...] = (),
+                    sampling: SamplingParams | None = None,
+                    ignore_eos: bool = False) -> RequestState:
         return self.submit_tokens(self.tokenizer.encode(prompt, add_special_tokens=False),
-                                  max_tokens, stop_strings)
+                                  max_tokens, stop_strings, sampling, ignore_eos)
 
     def submit_chat(self, messages: list[dict[str, str]], max_tokens: int,
-                    stop_strings: tuple[str, ...] = ()) -> RequestState:
+                    stop_strings: tuple[str, ...] = (),
+                    sampling: SamplingParams | None = None,
+                    ignore_eos: bool = False) -> RequestState:
         encoded = self.tokenizer.apply_chat_template(
             messages, tokenize=True, add_generation_prompt=True,
             enable_thinking=False)
         prompt_ids = encoded["input_ids"] if hasattr(encoded, "keys") else encoded
-        return self.submit_tokens(prompt_ids, max_tokens, stop_strings)
+        return self.submit_tokens(prompt_ids, max_tokens, stop_strings, sampling, ignore_eos)
 
     def snapshot(self) -> dict:
         with self.lock:
@@ -113,4 +125,49 @@ class InferenceEngine:
                 "cache": self.runner.cache.stats(), "memory": self.runner.memory_stats,
                 "provenance": self.runner.provenance,
                 "recent_requests": completed[-32:],
-                "recent_events": recent}
+                "recent_events": recent, "model_execution": self.runner.stats()}
+
+
+class IncrementalDetokenizer:
+    """Decode new tokenizer pieces with a bounded committed context window.
+
+    Incomplete UTF-8 suffixes stay pending until the next piece arrives. The
+    retained prefix provides the decoder context without decoding all prior IDs.
+    """
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+        self.pieces: list[str] = []
+        self.prefix = 0
+        self.read = 0
+        self.closed = False
+
+    def push(self, token_id: int) -> str:
+        if self.closed:
+            raise RuntimeError("Detokenizer is closed")
+        token = self.tokenizer.convert_ids_to_tokens([token_id], skip_special_tokens=True)
+        self.pieces.extend(token)
+        before = self.tokenizer.convert_tokens_to_string(self.pieces[self.prefix:self.read])
+        after = self.tokenizer.convert_tokens_to_string(self.pieces[self.prefix:])
+        if len(after) > len(before) and not after.endswith("\ufffd"):
+            if not after.startswith(before):
+                raise RuntimeError("Tokenizer changed an already committed prefix")
+            delta = after[len(before):]
+            previous_read = self.read
+            self.read = len(self.pieces)
+            self.prefix = previous_read
+            if self.prefix > 64:
+                self.pieces = self.pieces[self.prefix:]
+                self.read -= self.prefix
+                self.prefix = 0
+            return delta
+        return ""
+
+    def finish(self) -> str:
+        if self.closed:
+            return ""
+        self.closed = True
+        before = self.tokenizer.convert_tokens_to_string(self.pieces[self.prefix:self.read])
+        after = self.tokenizer.convert_tokens_to_string(self.pieces[self.prefix:])
+        if not after.startswith(before):
+            raise RuntimeError("Tokenizer changed final committed prefix")
+        return after[len(before):]
